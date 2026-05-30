@@ -1,0 +1,13 @@
+.git
+.github
+.gitignore
+.claude
+.vscode
+.idea
+*.md
+dist
+.env
+.env.*
+*.log
+Dockerfile
+.dockerignore

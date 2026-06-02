@@ -1,0 +1,50 @@
+services:
+  centrifuge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: centrifuge
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8080}:8080"
+    environment:
+      - PORT=8080
+      # Point at the postgres service in this compose. Credentials/DB name come
+      # from the POSTGRES_* vars below (mirrored into the connection string).
+      # POSTGRES_PASSWORD has no default — copy .env.example to .env to set it.
+      - DATABASE_URL=postgres://${POSTGRES_USER:-centrifuge}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-centrifuge}?sslmode=disable
+      # Ollama is NOT part of this compose — gemma4:31b runs on the LAN host.
+      - OLLAMA_URL=${OLLAMA_URL:-http://imperial-construct:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-gemma4:31b}
+      - INGEST_TOKEN=${INGEST_TOKEN}
+      - RELEVANCE_TOPICS=${RELEVANCE_TOPICS:-AI engineering,urbanism,transit/trains,nuclear,tech,video games}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: centrifuge-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-centrifuge}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB:-centrifuge}
+    volumes:
+      - centrifuge_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-centrifuge} -d ${POSTGRES_DB:-centrifuge}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  centrifuge_pgdata:

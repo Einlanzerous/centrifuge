@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Centrifuge — Newsletter Curator</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+
+<!-- Fonts: Geist + Instrument Serif + Geist Mono -->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+
+<!-- Tailwind CDN (play). For production, build it out. -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,typography"></script>
+<script>
+  tailwind.config = {
+    darkMode: 'class',
+    theme: {
+      extend: {
+        fontFamily: {
+          sans: ['"Geist"', 'system-ui', 'sans-serif'],
+          serif: ['"Instrument Serif"', 'Georgia', 'serif'],
+          mono: ['"Geist Mono"', 'ui-monospace', 'monospace'],
+        },
+        colors: {
+          ink: {
+            50:  '#f7f5f1',
+            100: '#efece5',
+            200: '#dfdbd0',
+            300: '#bcb6a8',
+            400: '#8c8576',
+            500: '#605a4e',
+            600: '#3f3b32',
+            700: '#2a2722',
+            800: '#1a1814',
+            900: '#0f0d0a',
+          },
+          // Topic accents — shared chroma, varied hue (oklch-derived)
+          ai:      { 50:'#fff5e6', 200:'#ffd699', 500:'#e88a16', 700:'#a5570b', ink:'#3a1d04' },
+          transit: { 50:'#e6fbf7', 200:'#9fe9d8', 500:'#0fb39b', 700:'#067a6a', ink:'#03332c' },
+          gov:     { 50:'#eeefff', 200:'#c2c5ff', 500:'#4f56e8', 700:'#2f33a6', ink:'#10123a' },
+          nuc:     { 50:'#f3fbe0', 200:'#d3ed8a', 500:'#7eb70d', 700:'#587f08', ink:'#21300a' },
+          game:    { 50:'#fde9f3', 200:'#f3a8cf', 500:'#d63c8c', 700:'#9c1d62', ink:'#3a0a23' },
+        },
+      },
+    },
+  };
+</script>
+
+<style>
+  :root {
+    --bg: #f7f5f1;
+    --paper: #ffffff;
+    --border: #ece8df;
+  }
+  html.dark { --bg: #0f0d0a; --paper: #1a1814; --border: #2a2722; }
+  html, body { background: var(--bg); }
+  body { font-family: 'Geist', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+
+  /* Masonry via CSS columns */
+  .masonry { column-gap: 1.25rem; }
+  .masonry > * { break-inside: avoid; margin-bottom: 1.25rem; display: block; }
+  @media (min-width: 640px)  { .masonry { column-count: 2; } }
+  @media (min-width: 1024px) { .masonry { column-count: 3; } }
+  @media (min-width: 1440px) { .masonry { column-count: 4; } }
+
+  .density-tight .masonry { column-gap: 0.875rem; }
+  .density-tight .masonry > * { margin-bottom: 0.875rem; }
+
+  /* Topic background art — generated, no figurative SVG */
+  .art {
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+  }
+  .art::before,
+  .art::after {
+    content: '';
+    position: absolute;
+    inset: -20%;
+    z-index: -1;
+  }
+  .art-ai::before {
+    background:
+      radial-gradient(60% 50% at 22% 30%, #ffb84d 0%, transparent 60%),
+      radial-gradient(50% 60% at 80% 80%, #ff7a18 0%, transparent 55%),
+      conic-gradient(from 200deg at 50% 50%, #fde7c2, #f6b961, #d96b0a, #fde7c2);
+  }
+  .art-transit::before {
+    background:
+      radial-gradient(55% 60% at 70% 30%, #5be3c8 0%, transparent 60%),
+      radial-gradient(60% 50% at 20% 85%, #066d5e 0%, transparent 55%),
+      linear-gradient(120deg, #0fb39b 0%, #d6f3ec 60%, #0a8474 100%);
+  }
+  .art-gov::before {
+    background:
+      radial-gradient(45% 50% at 30% 35%, #8d92ff 0%, transparent 60%),
+      radial-gradient(55% 60% at 80% 80%, #1c1f6e 0%, transparent 55%),
+      linear-gradient(135deg, #4f56e8 0%, #c7c9ff 50%, #2f33a6 100%);
+  }
+  .art-nuc::before {
+    background:
+      radial-gradient(50% 50% at 50% 30%, #d8f57f 0%, transparent 60%),
+      radial-gradient(60% 50% at 30% 90%, #587f08 0%, transparent 55%),
+      conic-gradient(from 40deg at 60% 50%, #f1fadc, #b6d965, #4f7008, #f1fadc);
+  }
+  .art-game::before {
+    background:
+      radial-gradient(50% 55% at 25% 30%, #ff8ec5 0%, transparent 60%),
+      radial-gradient(60% 50% at 80% 80%, #6a0a3b 0%, transparent 55%),
+      conic-gradient(from 320deg at 50% 50%, #fde0ef, #d63c8c, #6a0a3b, #fde0ef);
+  }
+  /* Subtle film grain on art */
+  .art::after {
+    background-image:
+      radial-gradient(rgba(255,255,255,0.18) 1px, transparent 1px),
+      radial-gradient(rgba(0,0,0,0.10) 1px, transparent 1px);
+    background-size: 3px 3px, 5px 5px;
+    background-position: 0 0, 1px 1px;
+    mix-blend-mode: overlay;
+    opacity: 0.55;
+  }
+
+  /* Hairline rules */
+  .rule { border-color: var(--border); }
+
+  /* Smooth view transitions */
+  .fade-enter-active, .fade-leave-active { transition: opacity .25s ease, transform .25s ease; }
+  .fade-enter-from { opacity: 0; transform: translateY(6px); }
+  .fade-leave-to   { opacity: 0; transform: translateY(-6px); }
+
+  .pop-enter-active { transition: transform .18s cubic-bezier(.2,.9,.2,1.4); }
+  .pop-enter-from   { transform: scale(.7); }
+
+  /* Tag style helpers */
+  .tag {
+    display: inline-flex; align-items: center; gap: .375rem;
+    padding: 2px 8px; border-radius: 999px;
+    font: 500 11px/1.4 'Geist Mono', monospace;
+    letter-spacing: .04em; text-transform: uppercase;
+  }
+  .tag .dot { width: 6px; height: 6px; border-radius: 999px; }
+
+  /* Custom scrollbar within modal */
+  .reader::-webkit-scrollbar { width: 8px; }
+  .reader::-webkit-scrollbar-thumb { background: rgba(0,0,0,.12); border-radius: 999px; }
+
+  /* Mark reading-pane prose visually distinct */
+  .prose-newsletter h1 { font-family: 'Instrument Serif'; font-size: 2.25rem; line-height: 1.05; margin: 0 0 .5rem; }
+  .prose-newsletter h2 { font-weight: 600; font-size: 1.15rem; margin: 1.25rem 0 .5rem; }
+  .prose-newsletter p  { margin: .6rem 0; line-height: 1.65; }
+  .prose-newsletter a  { text-decoration: underline; text-underline-offset: 3px; }
+  .prose-newsletter blockquote {
+    border-left: 3px solid var(--border);
+    padding-left: 1rem; color: #605a4e; font-style: italic;
+    font-family: 'Instrument Serif'; font-size: 1.25rem;
+  }
+  html.dark .prose-newsletter blockquote { color: #bcb6a8; }
+</style>
+</head>
+
+<body class="text-ink-800 dark:text-ink-100">
+
+<div id="app"></div>
+
+<!-- Vue 3 (UMD) -->
+<script src="https://unpkg.com/vue@3.4.27/dist/vue.global.prod.js"></script>
+<script src="centrifuge-app.js"></script>
+</body>
+</html>

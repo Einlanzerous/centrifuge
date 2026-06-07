@@ -41,6 +41,7 @@ func NewServer(cfg *config.Config, logger *slog.Logger, ingestor *ingest.Ingesto
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("POST /ingest", s.requireIngestToken(s.handleIngestRaw))
+	mux.HandleFunc("POST /ingest/html", s.requireIngestToken(s.handleIngestHTML))
 	s.handler = mux
 
 	return s

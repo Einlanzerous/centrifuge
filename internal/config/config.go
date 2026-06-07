@@ -6,15 +6,20 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Defaults applied when the corresponding environment variable is unset.
 const (
-	DefaultOllamaURL      = "http://ollama:11434"
-	DefaultModel          = "gemma4:31b"
-	DefaultPort           = 8080
-	DefaultLogLevel       = "info"
-	DefaultIngestMaxChars = 24000
+	DefaultOllamaURL        = "http://ollama:11434"
+	DefaultModel            = "gemma4:31b"
+	DefaultPort             = 8080
+	DefaultLogLevel         = "info"
+	DefaultIngestMaxChars   = 24000
+	DefaultOllamaTimeout    = 120 * time.Second
+	DefaultOllamaMaxRetries = 2
+	DefaultScoringInterval  = 30 * time.Second
+	DefaultScoringBatch     = 5
 )
 
 // DefaultRelevanceTopics is the fallback topic list used to bias scoring when
@@ -40,6 +45,13 @@ type Config struct {
 	// OllamaModel is the model tag passed to Ollama for relevance scoring.
 	OllamaModel string
 
+	// OllamaTimeout is the per-request ceiling for one generate call. The model
+	// is heavy, so this is generous.
+	OllamaTimeout time.Duration
+
+	// OllamaMaxRetries is how many times a transient Ollama failure is retried.
+	OllamaMaxRetries int
+
 	// IngestToken authenticates inbound ingestion requests.
 	IngestToken string
 
@@ -55,6 +67,16 @@ type Config struct {
 
 	// RelevanceTopics biases the scoring worker toward topics of interest.
 	RelevanceTopics []string
+
+	// ScoringEnabled turns the background scoring worker on or off. Off is
+	// useful in local dev with no reachable Ollama.
+	ScoringEnabled bool
+
+	// ScoringInterval is how often the worker polls for pending newsletters.
+	ScoringInterval time.Duration
+
+	// ScoringBatch is how many newsletters the worker claims per poll.
+	ScoringBatch int
 }
 
 // Load reads configuration from the environment, applies defaults, and returns
@@ -62,14 +84,19 @@ type Config struct {
 // required variable is missing or a value cannot be parsed.
 func Load() (*Config, error) {
 	cfg := &Config{
-		DatabaseURL:     os.Getenv("DATABASE_URL"),
-		OllamaURL:       getEnvDefault("OLLAMA_URL", DefaultOllamaURL),
-		OllamaModel:     getEnvDefault("OLLAMA_MODEL", DefaultModel),
-		IngestToken:     os.Getenv("INGEST_TOKEN"),
-		IngestMaxChars:  DefaultIngestMaxChars,
-		Port:            DefaultPort,
-		LogLevel:        getEnvDefault("LOG_LEVEL", DefaultLogLevel),
-		RelevanceTopics: parseTopics(os.Getenv("RELEVANCE_TOPICS")),
+		DatabaseURL:      os.Getenv("DATABASE_URL"),
+		OllamaURL:        getEnvDefault("OLLAMA_URL", DefaultOllamaURL),
+		OllamaModel:      getEnvDefault("OLLAMA_MODEL", DefaultModel),
+		OllamaTimeout:    DefaultOllamaTimeout,
+		OllamaMaxRetries: DefaultOllamaMaxRetries,
+		IngestToken:      os.Getenv("INGEST_TOKEN"),
+		IngestMaxChars:   DefaultIngestMaxChars,
+		Port:             DefaultPort,
+		LogLevel:         getEnvDefault("LOG_LEVEL", DefaultLogLevel),
+		RelevanceTopics:  parseTopics(os.Getenv("RELEVANCE_TOPICS")),
+		ScoringEnabled:   true,
+		ScoringInterval:  DefaultScoringInterval,
+		ScoringBatch:     DefaultScoringBatch,
 	}
 
 	if v := os.Getenv("PORT"); v != "" {
@@ -83,6 +110,28 @@ func Load() (*Config, error) {
 		cfg.Port = p
 	}
 
+	if v := os.Getenv("OLLAMA_TIMEOUT_SECONDS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("config: invalid OLLAMA_TIMEOUT_SECONDS %q: %w", v, err)
+		}
+		if n <= 0 {
+			return nil, fmt.Errorf("config: OLLAMA_TIMEOUT_SECONDS must be > 0, got %d", n)
+		}
+		cfg.OllamaTimeout = time.Duration(n) * time.Second
+	}
+
+	if v := os.Getenv("OLLAMA_MAX_RETRIES"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("config: invalid OLLAMA_MAX_RETRIES %q: %w", v, err)
+		}
+		if n < 0 {
+			return nil, fmt.Errorf("config: OLLAMA_MAX_RETRIES must be >= 0, got %d", n)
+		}
+		cfg.OllamaMaxRetries = n
+	}
+
 	if v := os.Getenv("INGEST_MAX_CHARS"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil {
@@ -92,6 +141,36 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("config: INGEST_MAX_CHARS must be >= 0, got %d", n)
 		}
 		cfg.IngestMaxChars = n
+	}
+
+	if v := os.Getenv("SCORING_ENABLED"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("config: invalid SCORING_ENABLED %q: %w", v, err)
+		}
+		cfg.ScoringEnabled = b
+	}
+
+	if v := os.Getenv("SCORING_INTERVAL_SECONDS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("config: invalid SCORING_INTERVAL_SECONDS %q: %w", v, err)
+		}
+		if n <= 0 {
+			return nil, fmt.Errorf("config: SCORING_INTERVAL_SECONDS must be > 0, got %d", n)
+		}
+		cfg.ScoringInterval = time.Duration(n) * time.Second
+	}
+
+	if v := os.Getenv("SCORING_BATCH_SIZE"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("config: invalid SCORING_BATCH_SIZE %q: %w", v, err)
+		}
+		if n <= 0 {
+			return nil, fmt.Errorf("config: SCORING_BATCH_SIZE must be > 0, got %d", n)
+		}
+		cfg.ScoringBatch = n
 	}
 
 	if err := cfg.validate(); err != nil {

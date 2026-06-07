@@ -1,4 +1,4 @@
-.PHONY: dev build test migrate docker tidy
+.PHONY: dev build test migrate docker tidy score-fixtures
 
 # ── Development ───────────────────────────────────────────────────────────────
 
@@ -14,6 +14,14 @@ build:
 
 test:
 	go test ./...
+
+# ── Scoring eval ──────────────────────────────────────────────────────────────
+# Run the scoring pipeline over the fixture newsletters and print the results.
+# Needs a reachable Ollama (OLLAMA_URL / OLLAMA_MODEL); no database required.
+# Redirect to a file and diff across prompt/model tweaks to compare quality.
+
+score-fixtures:
+	go run ./cmd/score-fixtures
 
 # ── Database ──────────────────────────────────────────────────────────────────
 

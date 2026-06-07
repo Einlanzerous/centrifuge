@@ -31,10 +31,12 @@ unavailable model never blocks intake:
   writes durable rows, so a slow or failed model call can never drop or block an
   email. Two entrypoints feed it (see [Ingestion](#ingestion) below).
 - **Postgres** is the buffer/queue between ingestion and scoring.
-- **Decoupled scoring worker** (`internal/ai`): pulls unscored items and asks
-  Ollama (`OLLAMA_MODEL` on `OLLAMA_URL`) to rate relevance against
-  `RELEVANCE_TOPICS`. Running out-of-band keeps ingestion latency low and lets
-  scoring back-pressure independently.
+- **Decoupled scoring worker** (`internal/worker` + `internal/ai`): polls
+  `pending_scoring` newsletters, asks Ollama (`OLLAMA_MODEL` on `OLLAMA_URL`) to
+  segment each into stories and score them against `RELEVANCE_TOPICS`, persists
+  the stories, and advances the newsletter to `scored`. Running out-of-band
+  keeps ingestion latency low and lets scoring back-pressure independently. See
+  [Scoring](#scoring).
 
 Supporting packages: `internal/config` (env loading), `internal/log`
 (structured JSON logging), `internal/httpapi` (HTTP surface), `internal/db`
@@ -90,6 +92,49 @@ result is truncated to a configurable budget (**`INGEST_MAX_CHARS`**, default
 truncation keeps the lead content. The cleaned text is also the dedupe
 fingerprint (lowercased before hashing).
 
+## Scoring
+
+The scoring worker (`internal/worker`) is the decoupled heart of the pipeline.
+On an interval it **claims** a batch of `pending_scoring` newsletters
+atomically (`UPDATE … FOR UPDATE SKIP LOCKED`, flipping them to `scoring`), so
+concurrent workers never double-process. For each one it runs a single
+**segment + score** pass through Ollama and persists the result in one
+transaction:
+
+- The model is asked to split the newsletter into the 1..N items it contains and
+  classify each as `story` / `blurb` / `ad` / `promo`, returning a JSON array.
+  Structured output (a JSON-Schema `format`) forces the array shape so digests
+  segment instead of collapsing into one object.
+- Each item is scored 0–100 for relevance against the current focus topics
+  (seeded by `RELEVANCE_TOPICS`, engagement-weighted over time), with one
+  `primary_topic`, secondary `labels`, and — for stories — a short `summary`.
+- Items become `stories` rows. **Only `story`-kind items are fully scored**;
+  ads/blurbs/promos are persisted unscored so engagement can still learn from
+  them. Each scored story records the `model` and `prompt_version` that produced
+  it.
+- The newsletter is then flipped to `scored`. The whole persist step is one
+  transaction, so a crash never leaves partial stories behind a still-`scoring`
+  newsletter.
+
+**Resilience — a newsletter is never lost.** A transient model failure
+(network / 5xx) requeues the newsletter to `pending_scoring` for a later poll; a
+terminal failure (undecodable or unparseable output) marks it `failed` rather
+than persisting garbage. The Ollama client itself retries transient calls with
+backoff. On startup the worker requeues any newsletter left in `scoring` by an
+interrupted run. Set `SCORING_ENABLED=false` to run intake-only (e.g. local dev
+with no reachable Ollama).
+
+### Eval harness
+
+Scoring quality is the main product risk, so `make score-fixtures` runs the full
+prep → model → validate path over a directory of real-newsletter fixtures and
+prints the segmented, scored items per fixture. It needs a reachable Ollama (no
+database). Fixtures live in `internal/ai/testdata/fixtures/`: `*.html` runs
+through the real sanitizer, `*.txt`/`*.md` is treated as already-clean body
+text. Tweak the prompt or `RELEVANCE_TOPICS`, re-run, and eyeball the deltas
+(redirect to a file to diff). `-raw` prints the model's unparsed response for
+debugging.
+
 ## Configuration
 
 All configuration is read from the environment.
@@ -99,11 +144,16 @@ All configuration is read from the environment.
 | `DATABASE_URL`     | yes      | —                                                                | Postgres connection string.                           |
 | `OLLAMA_URL`       | no       | `http://ollama:11434`                                            | Base URL of the Ollama server.                        |
 | `OLLAMA_MODEL`     | no       | `gemma4:31b`                                                     | Model tag used for relevance scoring.                 |
+| `OLLAMA_TIMEOUT_SECONDS` | no | `120`                                                          | Per-request timeout for one generate call.            |
+| `OLLAMA_MAX_RETRIES` | no     | `2`                                                              | Retries for a transient (network / 5xx) Ollama failure. |
 | `INGEST_TOKEN`     | no       | —                                                                | Token authenticating inbound ingestion requests (`X-Ingest-Token` header or `?token=`). Unset disables the check (local dev). |
 | `INGEST_MAX_CHARS` | no       | `24000`                                                          | Cap on the cleaned body text fed to the scorer; `0` disables truncation. |
 | `PORT`             | no       | `8080`                                                           | TCP port the HTTP server listens on.                  |
 | `LOG_LEVEL`        | no       | `info`                                                           | Log level: `debug`, `info`, `warn`, or `error`.       |
 | `RELEVANCE_TOPICS` | no       | `AI engineering,urbanism,transit/trains,nuclear,tech,video games` | Comma-separated topics that bias scoring.             |
+| `SCORING_ENABLED`  | no       | `true`                                                           | Run the background scoring worker. `false` = intake-only. |
+| `SCORING_INTERVAL_SECONDS` | no | `30`                                                          | How often the worker polls for pending newsletters.   |
+| `SCORING_BATCH_SIZE` | no     | `5`                                                              | Newsletters claimed per poll (processed sequentially). |
 
 A missing `DATABASE_URL` is reported as a clear startup error (the process exits
 non-zero rather than panicking).
@@ -130,4 +180,7 @@ DATABASE_URL=postgres://centrifuge:centrifuge@localhost:5432/centrifuge?sslmode=
 
 # Health check.
 curl -s localhost:8080/healthz
+
+# Eval scoring quality against the fixtures (needs a reachable Ollama, no DB).
+OLLAMA_URL=http://localhost:11434 make score-fixtures
 ```

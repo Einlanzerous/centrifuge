@@ -10,10 +10,11 @@ import (
 
 // Defaults applied when the corresponding environment variable is unset.
 const (
-	DefaultOllamaURL = "http://ollama:11434"
-	DefaultModel     = "gemma4:31b"
-	DefaultPort      = 8080
-	DefaultLogLevel  = "info"
+	DefaultOllamaURL      = "http://ollama:11434"
+	DefaultModel          = "gemma4:31b"
+	DefaultPort           = 8080
+	DefaultLogLevel       = "info"
+	DefaultIngestMaxChars = 24000
 )
 
 // DefaultRelevanceTopics is the fallback topic list used to bias scoring when
@@ -42,6 +43,10 @@ type Config struct {
 	// IngestToken authenticates inbound ingestion requests.
 	IngestToken string
 
+	// IngestMaxChars caps the cleaned body text derived from each newsletter
+	// before it reaches the scorer. 0 disables truncation.
+	IngestMaxChars int
+
 	// Port is the TCP port the HTTP server listens on.
 	Port int
 
@@ -61,6 +66,7 @@ func Load() (*Config, error) {
 		OllamaURL:       getEnvDefault("OLLAMA_URL", DefaultOllamaURL),
 		OllamaModel:     getEnvDefault("OLLAMA_MODEL", DefaultModel),
 		IngestToken:     os.Getenv("INGEST_TOKEN"),
+		IngestMaxChars:  DefaultIngestMaxChars,
 		Port:            DefaultPort,
 		LogLevel:        getEnvDefault("LOG_LEVEL", DefaultLogLevel),
 		RelevanceTopics: parseTopics(os.Getenv("RELEVANCE_TOPICS")),
@@ -75,6 +81,17 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("config: PORT must be 1-65535, got %d", p)
 		}
 		cfg.Port = p
+	}
+
+	if v := os.Getenv("INGEST_MAX_CHARS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("config: invalid INGEST_MAX_CHARS %q: %w", v, err)
+		}
+		if n < 0 {
+			return nil, fmt.Errorf("config: INGEST_MAX_CHARS must be >= 0, got %d", n)
+		}
+		cfg.IngestMaxChars = n
 	}
 
 	if err := cfg.validate(); err != nil {

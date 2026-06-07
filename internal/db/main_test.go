@@ -38,9 +38,35 @@ func TestMain(m *testing.M) {
 	}
 	testPool = pool
 
+	unlock := lockTestDB(pool)
 	code := m.Run()
+	unlock()
 	pool.Close()
 	os.Exit(code)
+}
+
+// testDBLockKey is a shared pg_advisory_lock key. The db, ingest, and httpapi
+// test packages all truncate the same centrifuge_test database, so `go test
+// ./...` (which runs packages in parallel) would let one package's TRUNCATE wipe
+// another's rows mid-test. Holding this lock for the duration of each package's
+// run serializes their access regardless of -p.
+const testDBLockKey = 918273645
+
+// lockTestDB takes the cross-package serialization lock and returns a release
+// func. The lock lives on a dedicated connection held until tests finish.
+func lockTestDB(pool *pgxpool.Pool) func() {
+	ctx := context.Background()
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		panic("acquire lock conn: " + err.Error())
+	}
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", testDBLockKey); err != nil {
+		panic("advisory lock: " + err.Error())
+	}
+	return func() {
+		_, _ = conn.Exec(ctx, "SELECT pg_advisory_unlock($1)", testDBLockKey)
+		conn.Release()
+	}
 }
 
 // setupDB skips when no test DB is configured, otherwise truncates all tables

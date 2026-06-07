@@ -1,0 +1,294 @@
+package ai
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
+)
+
+// Validation bounds applied to model output. They guard the DB (the stories
+// CHECK constraints) and keep a runaway model from persisting garbage.
+const (
+	// MaxSummaryChars caps a story summary; the model is asked for 2-3
+	// sentences, this bounds a model that ignores that.
+	MaxSummaryChars = 800
+	// MaxSnippetChars caps the excerpt.
+	MaxSnippetChars = 1000
+	// MaxLabels caps secondary tags per item.
+	MaxLabels = 5
+)
+
+// validKinds is the closed set the stories.kind CHECK enforces. An unknown or
+// empty kind from the model is coerced to KindStory ("story") rather than
+// dropped — a mis-labeled content item is better kept and scored than lost.
+var validKinds = map[string]bool{
+	KindStory: true,
+	KindBlurb: true,
+	KindAd:    true,
+	KindPromo: true,
+}
+
+// Story kinds, duplicated from internal/db so this package has no DB import.
+// Kept in sync with db.Kind* and the stories.kind CHECK.
+const (
+	KindStory = "story"
+	KindBlurb = "blurb"
+	KindAd    = "ad"
+	KindPromo = "promo"
+)
+
+// ScoredItem is one validated, normalized item the model segmented out of a
+// newsletter. The worker maps these onto db.Story rows (segmentation fields)
+// and db.Score (scoring fields, story-kind only).
+type ScoredItem struct {
+	Title          string
+	Snippet        string
+	URL            string
+	Kind           string
+	Section        string
+	Summary        string
+	RelevanceScore int
+	PrimaryTopic   string
+	Labels         []string
+}
+
+// rawItem mirrors the model's per-item JSON with lenient typing. flexInt
+// tolerates a relevance_score that arrives as a JSON number or a numeric
+// string; flexStrings tolerates labels as an array or a single string.
+type rawItem struct {
+	Title          string      `json:"title"`
+	Snippet        string      `json:"snippet"`
+	URL            string      `json:"url"`
+	Kind           string      `json:"kind"`
+	Section        string      `json:"section"`
+	Summary        string      `json:"summary"`
+	RelevanceScore flexInt     `json:"relevance_score"`
+	PrimaryTopic   string      `json:"primary_topic"`
+	Labels         flexStrings `json:"labels"`
+}
+
+// ParseItems strictly validates and normalizes a model response into scored
+// items. It tolerates the array being wrapped in an object (a common model
+// quirk under format:"json") but treats fundamentally unparseable output as an
+// error so the worker marks the newsletter failed instead of persisting junk.
+//
+// An empty array is a valid "nothing here" answer and returns (nil, nil).
+// Individual useless items (no title and no snippet) are dropped; if every item
+// is dropped from a non-empty response, that's an error (the model returned
+// shapes but no content).
+func ParseItems(raw string) ([]ScoredItem, error) {
+	arr, err := extractArray(raw)
+	if err != nil {
+		return nil, err
+	}
+	if len(arr) == 0 {
+		return nil, nil
+	}
+
+	out := make([]ScoredItem, 0, len(arr))
+	for _, rm := range arr {
+		var ri rawItem
+		if err := json.Unmarshal(rm, &ri); err != nil {
+			// One malformed element shouldn't sink the whole newsletter; skip it.
+			continue
+		}
+		item, ok := normalizeItem(ri)
+		if ok {
+			out = append(out, item)
+		}
+	}
+
+	if len(out) == 0 {
+		return nil, errors.New("ai: response had items but none were usable")
+	}
+	return out, nil
+}
+
+// extractArray pulls the JSON array out of a model response. It accepts a bare
+// array, an object wrapping the array under a common key (or any array-valued
+// field), or a single bare object (treated as a one-element array).
+func extractArray(raw string) ([]json.RawMessage, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil, errors.New("ai: empty model response")
+	}
+
+	// Bare array — the expected shape.
+	var arr []json.RawMessage
+	if err := json.Unmarshal([]byte(trimmed), &arr); err == nil {
+		return arr, nil
+	}
+
+	// Object: look for an array-valued field (prefer common wrapper keys).
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(trimmed), &obj); err != nil {
+		return nil, fmt.Errorf("ai: response is neither array nor object: %w", err)
+	}
+	for _, key := range []string{"items", "stories", "results", "segments", "data"} {
+		if v, ok := obj[key]; ok {
+			if a, err := asArray(v); err == nil {
+				return a, nil
+			}
+		}
+	}
+	for _, v := range obj {
+		if a, err := asArray(v); err == nil {
+			return a, nil
+		}
+	}
+
+	// A single bare item object: wrap it.
+	if _, hasTitle := obj["title"]; hasTitle {
+		return []json.RawMessage{json.RawMessage(trimmed)}, nil
+	}
+	if _, hasScore := obj["relevance_score"]; hasScore {
+		return []json.RawMessage{json.RawMessage(trimmed)}, nil
+	}
+	return nil, errors.New("ai: response object had no array of items")
+}
+
+func asArray(v json.RawMessage) ([]json.RawMessage, error) {
+	var a []json.RawMessage
+	if err := json.Unmarshal(v, &a); err != nil {
+		return nil, err
+	}
+	return a, nil
+}
+
+// normalizeItem clamps, trims, and defaults one raw item into a ScoredItem. The
+// bool is false when the item carries no usable content (no title and no
+// snippet) and should be dropped.
+func normalizeItem(ri rawItem) (ScoredItem, bool) {
+	title := strings.TrimSpace(ri.Title)
+	snippet := truncate(strings.TrimSpace(ri.Snippet), MaxSnippetChars)
+	if title == "" && snippet == "" {
+		return ScoredItem{}, false
+	}
+
+	kind := strings.ToLower(strings.TrimSpace(ri.Kind))
+	if !validKinds[kind] {
+		kind = KindStory
+	}
+
+	score := int(ri.RelevanceScore)
+	if score < 0 {
+		score = 0
+	}
+	if score > 100 {
+		score = 100
+	}
+
+	url := strings.TrimSpace(ri.URL)
+	if url != "" && !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+		url = "" // not a resolvable link; drop rather than store junk.
+	}
+
+	return ScoredItem{
+		Title:          title,
+		Snippet:        snippet,
+		URL:            url,
+		Kind:           kind,
+		Section:        strings.TrimSpace(ri.Section),
+		Summary:        truncate(strings.TrimSpace(ri.Summary), MaxSummaryChars),
+		RelevanceScore: score,
+		PrimaryTopic:   strings.TrimSpace(ri.PrimaryTopic),
+		Labels:         normalizeLabels(ri.Labels),
+	}, true
+}
+
+// normalizeLabels trims, de-dupes (case-insensitively), drops empties, and caps
+// the count.
+func normalizeLabels(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(in))
+	out := make([]string, 0, len(in))
+	for _, l := range in {
+		l = strings.TrimSpace(l)
+		if l == "" {
+			continue
+		}
+		key := strings.ToLower(l)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, l)
+		if len(out) == MaxLabels {
+			break
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// truncate is a rune-safe length cap.
+func truncate(s string, max int) string {
+	if max <= 0 {
+		return s
+	}
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max])
+}
+
+// flexInt unmarshals a JSON number or numeric string into an int, rounding
+// floats. Unparseable values become 0 rather than failing the whole item.
+type flexInt int
+
+func (f *flexInt) UnmarshalJSON(b []byte) error {
+	s := strings.TrimSpace(strings.Trim(string(b), `"`))
+	if s == "" || s == "null" {
+		*f = 0
+		return nil
+	}
+	if v, err := strconv.ParseFloat(s, 64); err == nil {
+		*f = flexInt(int(v + 0.5))
+		return nil
+	}
+	*f = 0
+	return nil
+}
+
+// flexStrings unmarshals labels whether the model returns an array of strings
+// or a single string.
+type flexStrings []string
+
+func (f *flexStrings) UnmarshalJSON(b []byte) error {
+	trimmed := strings.TrimSpace(string(b))
+	if trimmed == "" || trimmed == "null" {
+		*f = nil
+		return nil
+	}
+	if trimmed[0] == '[' {
+		var arr []string
+		if err := json.Unmarshal(b, &arr); err != nil {
+			// Tolerate non-string array elements by parsing loosely.
+			var loose []any
+			if err2 := json.Unmarshal(b, &loose); err2 != nil {
+				return nil
+			}
+			for _, v := range loose {
+				if s, ok := v.(string); ok {
+					arr = append(arr, s)
+				}
+			}
+		}
+		*f = arr
+		return nil
+	}
+	var single string
+	if err := json.Unmarshal(b, &single); err == nil {
+		*f = []string{single}
+		return nil
+	}
+	*f = nil
+	return nil
+}

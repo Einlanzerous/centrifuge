@@ -6,15 +6,18 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Defaults applied when the corresponding environment variable is unset.
 const (
-	DefaultOllamaURL      = "http://ollama:11434"
-	DefaultModel          = "gemma4:31b"
-	DefaultPort           = 8080
-	DefaultLogLevel       = "info"
-	DefaultIngestMaxChars = 24000
+	DefaultOllamaURL        = "http://ollama:11434"
+	DefaultModel            = "gemma4:31b"
+	DefaultPort             = 8080
+	DefaultLogLevel         = "info"
+	DefaultIngestMaxChars   = 24000
+	DefaultOllamaTimeout    = 120 * time.Second
+	DefaultOllamaMaxRetries = 2
 )
 
 // DefaultRelevanceTopics is the fallback topic list used to bias scoring when
@@ -40,6 +43,13 @@ type Config struct {
 	// OllamaModel is the model tag passed to Ollama for relevance scoring.
 	OllamaModel string
 
+	// OllamaTimeout is the per-request ceiling for one generate call. The model
+	// is heavy, so this is generous.
+	OllamaTimeout time.Duration
+
+	// OllamaMaxRetries is how many times a transient Ollama failure is retried.
+	OllamaMaxRetries int
+
 	// IngestToken authenticates inbound ingestion requests.
 	IngestToken string
 
@@ -62,14 +72,16 @@ type Config struct {
 // required variable is missing or a value cannot be parsed.
 func Load() (*Config, error) {
 	cfg := &Config{
-		DatabaseURL:     os.Getenv("DATABASE_URL"),
-		OllamaURL:       getEnvDefault("OLLAMA_URL", DefaultOllamaURL),
-		OllamaModel:     getEnvDefault("OLLAMA_MODEL", DefaultModel),
-		IngestToken:     os.Getenv("INGEST_TOKEN"),
-		IngestMaxChars:  DefaultIngestMaxChars,
-		Port:            DefaultPort,
-		LogLevel:        getEnvDefault("LOG_LEVEL", DefaultLogLevel),
-		RelevanceTopics: parseTopics(os.Getenv("RELEVANCE_TOPICS")),
+		DatabaseURL:      os.Getenv("DATABASE_URL"),
+		OllamaURL:        getEnvDefault("OLLAMA_URL", DefaultOllamaURL),
+		OllamaModel:      getEnvDefault("OLLAMA_MODEL", DefaultModel),
+		OllamaTimeout:    DefaultOllamaTimeout,
+		OllamaMaxRetries: DefaultOllamaMaxRetries,
+		IngestToken:      os.Getenv("INGEST_TOKEN"),
+		IngestMaxChars:   DefaultIngestMaxChars,
+		Port:             DefaultPort,
+		LogLevel:         getEnvDefault("LOG_LEVEL", DefaultLogLevel),
+		RelevanceTopics:  parseTopics(os.Getenv("RELEVANCE_TOPICS")),
 	}
 
 	if v := os.Getenv("PORT"); v != "" {
@@ -81,6 +93,28 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("config: PORT must be 1-65535, got %d", p)
 		}
 		cfg.Port = p
+	}
+
+	if v := os.Getenv("OLLAMA_TIMEOUT_SECONDS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("config: invalid OLLAMA_TIMEOUT_SECONDS %q: %w", v, err)
+		}
+		if n <= 0 {
+			return nil, fmt.Errorf("config: OLLAMA_TIMEOUT_SECONDS must be > 0, got %d", n)
+		}
+		cfg.OllamaTimeout = time.Duration(n) * time.Second
+	}
+
+	if v := os.Getenv("OLLAMA_MAX_RETRIES"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("config: invalid OLLAMA_MAX_RETRIES %q: %w", v, err)
+		}
+		if n < 0 {
+			return nil, fmt.Errorf("config: OLLAMA_MAX_RETRIES must be >= 0, got %d", n)
+		}
+		cfg.OllamaMaxRetries = n
 	}
 
 	if v := os.Getenv("INGEST_MAX_CHARS"); v != "" {

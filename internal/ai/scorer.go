@@ -49,11 +49,24 @@ func (s *Scorer) Score(ctx context.Context, in ScoreInput) ([]ScoredItem, error)
 		Body:       in.Body,
 		Topics:     s.topics,
 	})
-	raw, err := s.client.Generate(ctx, prompt, s.options)
+	raw, err := s.client.GenerateFormat(ctx, prompt, ItemsSchema(), s.options)
 	if err != nil {
 		return nil, err
 	}
 	return ParseItems(raw)
+}
+
+// Raw returns the model's unparsed response for in — the prompt is built the
+// same way as Score, but no validation is applied. It exists for the eval
+// harness to inspect what the model actually emits.
+func (s *Scorer) Raw(ctx context.Context, in ScoreInput) (string, error) {
+	prompt := BuildPrompt(PromptInput{
+		SourceName: in.SourceName,
+		Subject:    in.Subject,
+		Body:       in.Body,
+		Topics:     s.topics,
+	})
+	return s.client.GenerateFormat(ctx, prompt, ItemsSchema(), s.options)
 }
 
 // Model returns the model tag the scorer's client uses, for provenance.

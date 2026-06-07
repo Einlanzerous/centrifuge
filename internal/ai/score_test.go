@@ -120,6 +120,43 @@ func TestParseItemsDropsEmptyAndJunkURL(t *testing.T) {
 	}
 }
 
+func TestParseItemsToleratesTrailingJunk(t *testing.T) {
+	// Models occasionally append prose after the JSON, even under structured
+	// output (this is the '<' after top-level value failure seen in eval).
+	raw := `[{"title":"a","kind":"story","relevance_score":50}]
+
+<end of response>`
+	items, err := ParseItems(raw)
+	if err != nil {
+		t.Fatalf("ParseItems: %v", err)
+	}
+	if len(items) != 1 || items[0].Title != "a" {
+		t.Errorf("items = %+v", items)
+	}
+}
+
+func TestParseItemsStripsCodeFence(t *testing.T) {
+	raw := "```json\n[{\"title\":\"fenced\",\"kind\":\"story\"}]\n```"
+	items, err := ParseItems(raw)
+	if err != nil {
+		t.Fatalf("ParseItems: %v", err)
+	}
+	if len(items) != 1 || items[0].Title != "fenced" {
+		t.Errorf("items = %+v", items)
+	}
+}
+
+func TestParseItemsSingleObjectWithTrailingJunk(t *testing.T) {
+	raw := `{"title":"solo","kind":"story","relevance_score":40} trailing words`
+	items, err := ParseItems(raw)
+	if err != nil {
+		t.Fatalf("ParseItems: %v", err)
+	}
+	if len(items) != 1 || items[0].Title != "solo" || items[0].RelevanceScore != 40 {
+		t.Errorf("items = %+v", items)
+	}
+}
+
 func TestParseItemsEmptyArray(t *testing.T) {
 	items, err := ParseItems(`[]`)
 	if err != nil {

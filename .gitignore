@@ -24,3 +24,8 @@ coverage.out
 
 # ── Docker override ──────────────────────────────────────────────────────────
 docker-compose.override.yaml
+
+# ── Local scratch newsletters ────────────────────────────────────────────────
+# Reference newsletters dropped for manual eval; committed fixtures live under
+# internal/ai/testdata/fixtures/ instead.
+example-newsletters/

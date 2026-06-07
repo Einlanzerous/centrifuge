@@ -39,6 +39,32 @@ const (
 	KindPromo = "promo"
 )
 
+// ItemsSchema returns the JSON Schema passed to Ollama as the structured-output
+// format. Requiring a top-level array is what makes the model segment a digest
+// into many items instead of collapsing it into a single object; the per-item
+// required fields and the kind enum keep the shape predictable. Validation
+// still runs in ParseItems — the schema is a strong nudge, not the guarantee.
+func ItemsSchema() map[string]any {
+	return map[string]any{
+		"type": "array",
+		"items": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"title":           map[string]any{"type": "string"},
+				"snippet":         map[string]any{"type": "string"},
+				"url":             map[string]any{"type": "string"},
+				"kind":            map[string]any{"type": "string", "enum": []string{KindStory, KindBlurb, KindAd, KindPromo}},
+				"section":         map[string]any{"type": "string"},
+				"summary":         map[string]any{"type": "string"},
+				"relevance_score": map[string]any{"type": "integer", "minimum": 0, "maximum": 100},
+				"primary_topic":   map[string]any{"type": "string"},
+				"labels":          map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			},
+			"required": []string{"title", "kind", "relevance_score", "primary_topic", "summary"},
+		},
+	}
+}
+
 // ScoredItem is one validated, normalized item the model segmented out of a
 // newsletter. The worker maps these onto db.Story rows (segmentation fields)
 // and db.Score (scoring fields, story-kind only).
@@ -108,22 +134,25 @@ func ParseItems(raw string) ([]ScoredItem, error) {
 
 // extractArray pulls the JSON array out of a model response. It accepts a bare
 // array, an object wrapping the array under a common key (or any array-valued
-// field), or a single bare object (treated as a one-element array).
+// field), or a single bare object (treated as a one-element array). It is
+// robust to the two things models do even under structured output: wrapping the
+// JSON in a ```json fence, and appending trailing prose after the value (so it
+// decodes the FIRST value and ignores the rest).
 func extractArray(raw string) ([]json.RawMessage, error) {
-	trimmed := strings.TrimSpace(raw)
+	trimmed := stripFence(strings.TrimSpace(raw))
 	if trimmed == "" {
 		return nil, errors.New("ai: empty model response")
 	}
 
-	// Bare array — the expected shape.
+	// Bare array — the expected shape. decodeFirst tolerates trailing bytes.
 	var arr []json.RawMessage
-	if err := json.Unmarshal([]byte(trimmed), &arr); err == nil {
+	if err := decodeFirst(trimmed, &arr); err == nil {
 		return arr, nil
 	}
 
 	// Object: look for an array-valued field (prefer common wrapper keys).
 	var obj map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(trimmed), &obj); err != nil {
+	if err := decodeFirst(trimmed, &obj); err != nil {
 		return nil, fmt.Errorf("ai: response is neither array nor object: %w", err)
 	}
 	for _, key := range []string{"items", "stories", "results", "segments", "data"} {
@@ -139,14 +168,43 @@ func extractArray(raw string) ([]json.RawMessage, error) {
 		}
 	}
 
-	// A single bare item object: wrap it.
-	if _, hasTitle := obj["title"]; hasTitle {
-		return []json.RawMessage{json.RawMessage(trimmed)}, nil
-	}
-	if _, hasScore := obj["relevance_score"]; hasScore {
-		return []json.RawMessage{json.RawMessage(trimmed)}, nil
+	// A single bare item object: wrap it. Re-marshal the decoded object so any
+	// trailing bytes from the raw response are excluded.
+	_, hasTitle := obj["title"]
+	_, hasScore := obj["relevance_score"]
+	if hasTitle || hasScore {
+		one, err := json.Marshal(obj)
+		if err != nil {
+			return nil, fmt.Errorf("ai: re-marshal single item: %w", err)
+		}
+		return []json.RawMessage{one}, nil
 	}
 	return nil, errors.New("ai: response object had no array of items")
+}
+
+// decodeFirst decodes the first JSON value in s into v, ignoring any trailing
+// bytes (json.Unmarshal rejects them; json.Decoder does not). This tolerates a
+// model that appends prose after the JSON.
+func decodeFirst(s string, v any) error {
+	return json.NewDecoder(strings.NewReader(s)).Decode(v)
+}
+
+// stripFence removes a single surrounding Markdown code fence (```json ... ```)
+// if present, so fenced output still parses.
+func stripFence(s string) string {
+	if !strings.HasPrefix(s, "```") {
+		return s
+	}
+	// Drop the opening fence line (```), including an optional language tag.
+	if nl := strings.IndexByte(s, '\n'); nl >= 0 {
+		s = s[nl+1:]
+	} else {
+		return s
+	}
+	if i := strings.LastIndex(s, "```"); i >= 0 {
+		s = s[:i]
+	}
+	return strings.TrimSpace(s)
 }
 
 func asArray(v json.RawMessage) ([]json.RawMessage, error) {

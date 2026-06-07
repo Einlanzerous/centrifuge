@@ -137,13 +137,15 @@ const DefaultModelFallback = "gemma4:31b"
 // Model returns the model tag this client sends, for provenance stamping.
 func (c *Client) Model() string { return c.model }
 
-// generateRequest is the /api/generate payload. format:"json" instructs Ollama
-// to constrain output to valid JSON; stream:false collapses the reply into one
-// response object instead of a token stream.
+// generateRequest is the /api/generate payload. format constrains output: the
+// string "json" requires any valid JSON, while a JSON Schema object (Ollama
+// structured outputs) requires output matching that schema — which is how the
+// scorer forces a top-level array of items. stream:false collapses the reply
+// into one response object instead of a token stream.
 type generateRequest struct {
 	Model   string         `json:"model"`
 	Prompt  string         `json:"prompt"`
-	Format  string         `json:"format"`
+	Format  any            `json:"format"`
 	Stream  bool           `json:"stream"`
 	Options map[string]any `json:"options,omitempty"`
 }
@@ -155,19 +157,31 @@ type generateResponse struct {
 	Done     bool   `json:"done"`
 }
 
-// Generate sends prompt to the model and returns the raw response text, which
-// is expected to be JSON (the endpoint runs with format:"json"). Options are
-// optional Ollama runtime options (temperature, num_ctx, ...).
+// Generate sends prompt to the model and returns the raw response text,
+// constrained to valid JSON (format:"json"). Options are optional Ollama
+// runtime options (temperature, num_ctx, ...). For a schema-constrained
+// response, use GenerateFormat.
 //
 // Transient failures (dial errors, timeouts, 5xx) are retried up to maxRetries
 // with linear backoff and surface as *TransportError; a 2xx body that won't
 // decode surfaces as *DecodeError and is not retried. The caller can branch on
 // the error type to decide requeue-vs-skip.
 func (c *Client) Generate(ctx context.Context, prompt string, options map[string]any) (string, error) {
+	return c.GenerateFormat(ctx, prompt, "json", options)
+}
+
+// GenerateFormat is Generate with an explicit format value: the string "json"
+// for any valid JSON, or a JSON Schema (e.g. map[string]any) to require the
+// response match that schema. The scorer passes a schema to force a top-level
+// array of items rather than a single object.
+func (c *Client) GenerateFormat(ctx context.Context, prompt string, format any, options map[string]any) (string, error) {
+	if format == nil {
+		format = "json"
+	}
 	body, err := json.Marshal(generateRequest{
 		Model:   c.model,
 		Prompt:  prompt,
-		Format:  "json",
+		Format:  format,
 		Stream:  false,
 		Options: options,
 	})

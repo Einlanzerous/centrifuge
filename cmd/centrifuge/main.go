@@ -20,6 +20,7 @@ import (
 	"github.com/Einlanzerous/centrifuge/internal/config"
 	"github.com/Einlanzerous/centrifuge/internal/db"
 	"github.com/Einlanzerous/centrifuge/internal/httpapi"
+	"github.com/Einlanzerous/centrifuge/internal/ingest"
 	applog "github.com/Einlanzerous/centrifuge/internal/log"
 )
 
@@ -59,7 +60,14 @@ func runMigrate(cfg *config.Config, logger *slog.Logger) {
 }
 
 func runServer(cfg *config.Config, logger *slog.Logger) error {
-	srv := httpapi.NewServer(cfg, logger)
+	pool, err := db.NewPool(context.Background(), cfg.DatabaseURL)
+	if err != nil {
+		return fmt.Errorf("connect database: %w", err)
+	}
+	defer pool.Close()
+
+	ingestor := ingest.NewIngestor(pool)
+	srv := httpapi.NewServer(cfg, logger, ingestor)
 
 	httpServer := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),

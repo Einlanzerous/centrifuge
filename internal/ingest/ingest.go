@@ -16,16 +16,31 @@ import (
 // InboundMessage and calls Ingest. It persists raw deliveries durably and never
 // scores inline; scoring is the decoupled Phase 3 worker's job.
 type Ingestor struct {
-	sources     *db.SourceRepo
-	newsletters *db.NewsletterRepo
+	sources      *db.SourceRepo
+	newsletters  *db.NewsletterRepo
+	maxBodyChars int
+}
+
+// Option configures an Ingestor.
+type Option func(*Ingestor)
+
+// WithMaxBodyChars caps the cleaned body text derived for each newsletter. A
+// value <= 0 disables truncation.
+func WithMaxBodyChars(n int) Option {
+	return func(in *Ingestor) { in.maxBodyChars = n }
 }
 
 // NewIngestor builds an Ingestor over database (a pool or a transaction).
-func NewIngestor(database db.DBTX) *Ingestor {
-	return &Ingestor{
-		sources:     db.NewSourceRepo(database),
-		newsletters: db.NewNewsletterRepo(database),
+func NewIngestor(database db.DBTX, opts ...Option) *Ingestor {
+	in := &Ingestor{
+		sources:      db.NewSourceRepo(database),
+		newsletters:  db.NewNewsletterRepo(database),
+		maxBodyChars: DefaultMaxBodyChars,
 	}
+	for _, opt := range opts {
+		opt(in)
+	}
+	return in
 }
 
 // Result reports the outcome of an Ingest call.
@@ -67,10 +82,13 @@ func (in *Ingestor) Ingest(ctx context.Context, msg InboundMessage) (*Result, er
 	if msg.RawHTML != "" {
 		nl.RawHTML = &msg.RawHTML
 	}
-	if msg.BodyText != "" {
-		nl.BodyText = &msg.BodyText
+
+	// Derive the cleaned, capped body the scorer will read, and dedupe on it.
+	bodyText := in.prepareBody(msg)
+	if bodyText != "" {
+		nl.BodyText = &bodyText
 	}
-	if h := dedupeHash(msg); h != "" {
+	if h := hashBody(bodyText); h != "" {
 		nl.DedupeHash = &h
 	}
 
@@ -92,25 +110,24 @@ func normalizeAddr(addr string) string {
 	return a
 }
 
-// dedupeHash computes a stable content fingerprint, used as the fallback dedupe
-// key when a sender omits or reuses its Message-ID. It hashes the normalized
-// body — whitespace-collapsed and lowercased so trivial reformatting doesn't
-// defeat it — preferring the cleaned text and falling back to raw HTML.
-func dedupeHash(msg InboundMessage) string {
-	body := msg.BodyText
-	if body == "" {
-		body = msg.RawHTML
+// prepareBody produces the cleaned, capped body text persisted with the
+// newsletter and later fed to the scorer. HTML is the richest source, so when
+// present it is sanitized to text; otherwise a pre-extracted plaintext body is
+// whitespace-normalized and truncated. raw_html is still stored verbatim.
+func (in *Ingestor) prepareBody(msg InboundMessage) string {
+	if msg.RawHTML != "" {
+		return CleanText(msg.RawHTML, in.maxBodyChars)
 	}
-	body = normalizeBody(body)
+	return truncateChars(collapseSpaces(msg.BodyText), in.maxBodyChars)
+}
+
+// hashBody computes the fallback dedupe key from the prepared body text. It
+// lowercases before hashing so case differences don't defeat the match. An
+// empty body yields no hash.
+func hashBody(body string) string {
 	if body == "" {
 		return ""
 	}
-	sum := sha256.Sum256([]byte(body))
+	sum := sha256.Sum256([]byte(strings.ToLower(body)))
 	return hex.EncodeToString(sum[:])
-}
-
-// normalizeBody collapses all runs of whitespace to single spaces and lowercases
-// the result, so cosmetic differences don't produce distinct hashes.
-func normalizeBody(s string) string {
-	return strings.ToLower(strings.Join(strings.Fields(s), " "))
 }

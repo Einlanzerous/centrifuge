@@ -66,7 +66,7 @@ func runServer(cfg *config.Config, logger *slog.Logger) error {
 	}
 	defer pool.Close()
 
-	ingestor := ingest.NewIngestor(pool)
+	ingestor := ingest.NewIngestor(pool, ingest.WithMaxBodyChars(cfg.IngestMaxChars))
 	srv := httpapi.NewServer(cfg, logger, ingestor)
 
 	httpServer := &http.Server{

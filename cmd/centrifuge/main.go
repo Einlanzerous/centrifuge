@@ -14,14 +14,17 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
+	"github.com/Einlanzerous/centrifuge/internal/ai"
 	"github.com/Einlanzerous/centrifuge/internal/config"
 	"github.com/Einlanzerous/centrifuge/internal/db"
 	"github.com/Einlanzerous/centrifuge/internal/httpapi"
 	"github.com/Einlanzerous/centrifuge/internal/ingest"
 	applog "github.com/Einlanzerous/centrifuge/internal/log"
+	"github.com/Einlanzerous/centrifuge/internal/worker"
 )
 
 // migrationsDir is the directory holding versioned SQL migrations.
@@ -69,6 +72,33 @@ func runServer(cfg *config.Config, logger *slog.Logger) error {
 	ingestor := ingest.NewIngestor(pool, ingest.WithMaxBodyChars(cfg.IngestMaxChars))
 	srv := httpapi.NewServer(cfg, logger, ingestor)
 
+	// The scoring worker runs decoupled from the HTTP path. Its lifecycle is
+	// tied to workerCtx, which is cancelled on shutdown so the loop drains.
+	workerCtx, stopWorker := context.WithCancel(context.Background())
+	defer stopWorker()
+	var workerWG sync.WaitGroup
+	if cfg.ScoringEnabled {
+		scorer := ai.NewScorer(
+			ai.NewClient(cfg.OllamaURL, cfg.OllamaModel,
+				ai.WithTimeout(cfg.OllamaTimeout),
+				ai.WithMaxRetries(cfg.OllamaMaxRetries),
+			),
+			cfg.RelevanceTopics,
+		)
+		w := worker.New(pool, scorer,
+			worker.WithInterval(cfg.ScoringInterval),
+			worker.WithBatchSize(cfg.ScoringBatch),
+			worker.WithLogger(logger),
+		)
+		workerWG.Add(1)
+		go func() {
+			defer workerWG.Done()
+			w.Run(workerCtx)
+		}()
+	} else {
+		logger.Info("scoring worker disabled (SCORING_ENABLED=false)")
+	}
+
 	httpServer := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
 		Handler:           srv.Handler(),
@@ -102,6 +132,11 @@ func runServer(cfg *config.Config, logger *slog.Logger) error {
 	if err := httpServer.Shutdown(ctx); err != nil {
 		return fmt.Errorf("graceful shutdown: %w", err)
 	}
+
+	// Stop the worker and wait for the in-flight batch to unwind.
+	stopWorker()
+	workerWG.Wait()
+
 	logger.Info("stopped")
 	return nil
 }

@@ -118,6 +118,39 @@ func (r *NewsletterRepo) FetchByStatus(ctx context.Context, status string, limit
 	return out, rows.Err()
 }
 
+// ClaimPending atomically claims up to limit pending_scoring newsletters for
+// the scoring worker, flipping them to scoring and returning them (oldest
+// first). FOR UPDATE SKIP LOCKED makes the claim safe under concurrent workers:
+// two workers never grab the same row, and a row another worker holds is
+// skipped rather than blocked on. An empty slice means nothing was pending.
+func (r *NewsletterRepo) ClaimPending(ctx context.Context, limit int) ([]Newsletter, error) {
+	const q = `
+UPDATE newsletters SET processing_status = $2
+WHERE id IN (
+    SELECT id FROM newsletters
+    WHERE processing_status = $1
+    ORDER BY ingested_at
+    LIMIT $3
+    FOR UPDATE SKIP LOCKED
+)
+RETURNING ` + newsletterCols
+	rows, err := r.db.Query(ctx, q, StatusPending, StatusScoring, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Newsletter
+	for rows.Next() {
+		n, err := scanNewsletter(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *n)
+	}
+	return out, rows.Err()
+}
+
 // UpdateStatus transitions a newsletter's processing_status. It returns
 // pgx.ErrNoRows if no newsletter has the given id.
 func (r *NewsletterRepo) UpdateStatus(ctx context.Context, id, status string) error {

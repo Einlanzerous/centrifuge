@@ -18,6 +18,8 @@ const (
 	DefaultIngestMaxChars   = 24000
 	DefaultOllamaTimeout    = 120 * time.Second
 	DefaultOllamaMaxRetries = 2
+	DefaultScoringInterval  = 30 * time.Second
+	DefaultScoringBatch     = 5
 )
 
 // DefaultRelevanceTopics is the fallback topic list used to bias scoring when
@@ -65,6 +67,16 @@ type Config struct {
 
 	// RelevanceTopics biases the scoring worker toward topics of interest.
 	RelevanceTopics []string
+
+	// ScoringEnabled turns the background scoring worker on or off. Off is
+	// useful in local dev with no reachable Ollama.
+	ScoringEnabled bool
+
+	// ScoringInterval is how often the worker polls for pending newsletters.
+	ScoringInterval time.Duration
+
+	// ScoringBatch is how many newsletters the worker claims per poll.
+	ScoringBatch int
 }
 
 // Load reads configuration from the environment, applies defaults, and returns
@@ -82,6 +94,9 @@ func Load() (*Config, error) {
 		Port:             DefaultPort,
 		LogLevel:         getEnvDefault("LOG_LEVEL", DefaultLogLevel),
 		RelevanceTopics:  parseTopics(os.Getenv("RELEVANCE_TOPICS")),
+		ScoringEnabled:   true,
+		ScoringInterval:  DefaultScoringInterval,
+		ScoringBatch:     DefaultScoringBatch,
 	}
 
 	if v := os.Getenv("PORT"); v != "" {
@@ -126,6 +141,36 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("config: INGEST_MAX_CHARS must be >= 0, got %d", n)
 		}
 		cfg.IngestMaxChars = n
+	}
+
+	if v := os.Getenv("SCORING_ENABLED"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("config: invalid SCORING_ENABLED %q: %w", v, err)
+		}
+		cfg.ScoringEnabled = b
+	}
+
+	if v := os.Getenv("SCORING_INTERVAL_SECONDS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("config: invalid SCORING_INTERVAL_SECONDS %q: %w", v, err)
+		}
+		if n <= 0 {
+			return nil, fmt.Errorf("config: SCORING_INTERVAL_SECONDS must be > 0, got %d", n)
+		}
+		cfg.ScoringInterval = time.Duration(n) * time.Second
+	}
+
+	if v := os.Getenv("SCORING_BATCH_SIZE"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("config: invalid SCORING_BATCH_SIZE %q: %w", v, err)
+		}
+		if n <= 0 {
+			return nil, fmt.Errorf("config: SCORING_BATCH_SIZE must be > 0, got %d", n)
+		}
+		cfg.ScoringBatch = n
 	}
 
 	if err := cfg.validate(); err != nil {

@@ -134,6 +134,9 @@ func NewClient(baseURL, model string, opts ...Option) *Client {
 // no WithModel option. Real callers pass config.OllamaModel.
 const DefaultModelFallback = "gemma4:31b"
 
+// Model returns the model tag this client sends, for provenance stamping.
+func (c *Client) Model() string { return c.model }
+
 // generateRequest is the /api/generate payload. format:"json" instructs Ollama
 // to constrain output to valid JSON; stream:false collapses the reply into one
 // response object instead of a token stream.

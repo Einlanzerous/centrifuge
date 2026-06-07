@@ -193,7 +193,7 @@ func (w *Worker) persist(ctx context.Context, nl db.Newsletter, items []ai.Score
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	stories := db.NewStoryRepo(tx)
 	newsletters := db.NewNewsletterRepo(tx)

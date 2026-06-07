@@ -236,7 +236,7 @@ func (c *Client) doOnce(ctx context.Context, body []byte) (string, error) {
 	if err != nil {
 		return "", &TransportError{Err: err}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		// Carry the status so the retry loop can class it: 5xx (server busy /

@@ -51,6 +51,20 @@ type Newsletter struct {
 	ProcessingStatus string
 }
 
+// DefaultSessionLabel is the single implicit user's session label. Centrifuge
+// is single-user today; the read API always operates on this session.
+const DefaultSessionLabel = "default"
+
+// Session tracks "Since you last looked" state for the Today view (CTFG-26).
+// LastViewedAt is nil until the feed has been marked seen at least once.
+type Session struct {
+	ID           string
+	Label        string
+	LastViewedAt *time.Time
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
 // Story is the unit of relevance, scoring, and engagement (CTFG-13). The
 // scoring worker writes the Scoring fields in place after segmentation; they
 // are nil until then.

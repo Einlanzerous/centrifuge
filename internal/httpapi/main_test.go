@@ -69,7 +69,7 @@ func dbPool(t *testing.T) *pgxpool.Pool {
 	if testPool == nil {
 		t.Skip("DATABASE_URL_TEST not set; skipping DB-backed test")
 	}
-	if _, err := testPool.Exec(context.Background(), `TRUNCATE stories, newsletters, sources CASCADE`); err != nil {
+	if _, err := testPool.Exec(context.Background(), `TRUNCATE stories, newsletters, sources, user_sessions CASCADE`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 	return testPool

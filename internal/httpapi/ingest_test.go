@@ -22,7 +22,7 @@ const sampleEmail = "From: Example News <news@example.com>\r\n" +
 
 func newServer(t *testing.T, token string, ingestor *ingest.Ingestor) *Server {
 	t.Helper()
-	return NewServer(&config.Config{IngestToken: token}, slog.New(slog.NewTextHandler(io.Discard, nil)), ingestor)
+	return NewServer(&config.Config{IngestToken: token}, slog.New(slog.NewTextHandler(io.Discard, nil)), ingestor, nil)
 }
 
 func TestIngestRequiresToken(t *testing.T) {

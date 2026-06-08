@@ -119,6 +119,11 @@ func (r *StoryRepo) SetRating(ctx context.Context, storyID string, rating int) e
 	return r.execOne(ctx, `UPDATE stories SET user_rating = $2 WHERE id = $1`, storyID, rating)
 }
 
+// ClearRating removes a story's thumbs rating (the "none" choice).
+func (r *StoryRepo) ClearRating(ctx context.Context, storyID string) error {
+	return r.execOne(ctx, `UPDATE stories SET user_rating = NULL WHERE id = $1`, storyID)
+}
+
 // MarkOpened stamps when a story was opened.
 func (r *StoryRepo) MarkOpened(ctx context.Context, storyID string, at time.Time) error {
 	return r.execOne(ctx, `UPDATE stories SET opened_at = $2 WHERE id = $1`, storyID, at)

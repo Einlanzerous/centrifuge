@@ -38,6 +38,7 @@ func main() {
 	maxChars := flag.Int("max-chars", config.DefaultIngestMaxChars, "cap on prepped body chars fed to the model")
 	timeout := flag.Duration("timeout", config.DefaultOllamaTimeout, "per-request Ollama timeout")
 	raw := flag.Bool("raw", false, "print the model's unparsed JSON response per fixture (debug)")
+	prepOnly := flag.Bool("prep-only", false, "print the prepped body the model would see and skip scoring (no Ollama needed)")
 	flag.Parse()
 
 	topics := config.DefaultRelevanceTopics
@@ -66,6 +67,13 @@ func main() {
 	ctx := context.Background()
 	var failures int
 	for _, f := range files {
+		if *prepOnly {
+			if err := prepFixture(f, *maxChars); err != nil {
+				failures++
+				fmt.Printf("fixture: %s\n  ERROR: %v\n\n", filepath.Base(f), err)
+			}
+			continue
+		}
 		if err := scoreFixture(ctx, scorer, f, *maxChars, *raw); err != nil {
 			failures++
 			fmt.Printf("fixture: %s\n  ERROR: %v\n\n", filepath.Base(f), err)
@@ -76,6 +84,20 @@ func main() {
 	if failures > 0 {
 		os.Exit(1)
 	}
+}
+
+// prepFixture preps one fixture file and prints the model-ready body, without
+// touching the model. It exists to inspect exactly what the model will see —
+// and to derive token-free text fixtures from raw newsletter HTML, since the
+// sanitizer drops every href (where tracking/unsubscribe tokens live).
+func prepFixture(path string, maxChars int) error {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	body, kind := prep(path, string(content), maxChars)
+	fmt.Printf("fixture: %s  (%s, %d prepped chars)\n--- prepped body ---\n%s\n---\n\n", filepath.Base(path), kind, len([]rune(body)), body)
+	return nil
 }
 
 // scoreFixture preps one fixture file, scores it, and prints the result.

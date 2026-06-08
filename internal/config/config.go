@@ -16,7 +16,7 @@ const (
 	DefaultPort             = 8080
 	DefaultLogLevel         = "info"
 	DefaultIngestMaxChars   = 24000
-	DefaultOllamaTimeout    = 120 * time.Second
+	DefaultOllamaTimeout    = 900 * time.Second
 	DefaultOllamaMaxRetries = 2
 	DefaultScoringInterval  = 30 * time.Second
 	DefaultScoringBatch     = 5

@@ -14,20 +14,23 @@ import (
 
 	"github.com/Einlanzerous/centrifuge/internal/config"
 	"github.com/Einlanzerous/centrifuge/internal/ingest"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Server bundles the HTTP handler with the configuration, logger, and ingestion
-// core it needs.
+// Server bundles the HTTP handler with the configuration, logger, datastore,
+// and ingestion core it needs.
 type Server struct {
 	cfg      *config.Config
 	logger   *slog.Logger
 	ingestor *ingest.Ingestor
+	pool     *pgxpool.Pool
 	handler  http.Handler
 }
 
 // NewServer constructs a Server with all routes registered. ingestor backs the
-// /ingest endpoints; it may be nil when those endpoints are not needed.
-func NewServer(cfg *config.Config, logger *slog.Logger, ingestor *ingest.Ingestor) *Server {
+// /ingest endpoints and pool backs the read API; either may be nil when those
+// routes are not needed (the read endpoints report 503 without a pool).
+func NewServer(cfg *config.Config, logger *slog.Logger, ingestor *ingest.Ingestor, pool *pgxpool.Pool) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -36,13 +39,27 @@ func NewServer(cfg *config.Config, logger *slog.Logger, ingestor *ingest.Ingesto
 		cfg:      cfg,
 		logger:   logger,
 		ingestor: ingestor,
+		pool:     pool,
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("POST /ingest", s.requireIngestToken(s.handleIngestRaw))
 	mux.HandleFunc("POST /ingest/html", s.requireIngestToken(s.handleIngestHTML))
-	s.handler = mux
+
+	// Read API backing the UI (CTFG-26).
+	mux.HandleFunc("GET /api/today", s.handleToday)
+	mux.HandleFunc("POST /api/today/seen", s.handleTodaySeen)
+	mux.HandleFunc("GET /api/archive", s.handleArchive)
+	mux.HandleFunc("GET /api/items/{id}", s.handleItem)
+	mux.HandleFunc("POST /api/items/{id}/bookmark", s.handleBookmark)
+	mux.HandleFunc("POST /api/items/{id}/rate", s.handleRate)
+	mux.HandleFunc("POST /api/items/{id}/mark-ad", s.handleMarkAd)
+	mux.HandleFunc("GET /api/topics", s.handleTopics)
+	mux.HandleFunc("GET /api/sources", s.handleSources)
+	mux.HandleFunc("GET /feed.xml", s.handleFeed)
+
+	s.handler = s.withCORS(mux)
 
 	return s
 }
@@ -82,6 +99,38 @@ func (s *Server) requireIngestToken(next http.HandlerFunc) http.HandlerFunc {
 		}
 		next(w, r)
 	}
+}
+
+// withCORS allows the browser frontend (CTFG-27), which may be served from a
+// different origin, to call the API. The allowed origin is configurable
+// (CORS_ALLOW_ORIGIN, default "*"); preflight OPTIONS requests short-circuit
+// here. The API carries no cookies/credentials yet, so "*" is safe.
+func (s *Server) withCORS(next http.Handler) http.Handler {
+	origin := s.cfg.CORSAllowOrigin
+	if origin == "" {
+		origin = "*"
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Vary", "Origin")
+		if r.Method == http.MethodOptions {
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-Ingest-Token")
+			w.Header().Set("Access-Control-Max-Age", "86400")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// requireDB guards the read endpoints: without a pool there is nothing to read.
+func (s *Server) requireDB(w http.ResponseWriter) bool {
+	if s.pool == nil {
+		writeError(w, http.StatusServiceUnavailable, "datastore is not available")
+		return false
+	}
+	return true
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

@@ -114,6 +114,16 @@ func (r *StoryRepo) SetBookmark(ctx context.Context, storyID string, bookmarked 
 	return r.execOne(ctx, `UPDATE stories SET bookmarked = $2 WHERE id = $1`, storyID, bookmarked)
 }
 
+// ToggleBookmark flips a story's bookmark flag atomically and returns the new
+// value. Returns pgx.ErrNoRows if the story id is unknown.
+func (r *StoryRepo) ToggleBookmark(ctx context.Context, storyID string) (bool, error) {
+	var bookmarked bool
+	err := r.db.QueryRow(ctx,
+		`UPDATE stories SET bookmarked = NOT bookmarked WHERE id = $1 RETURNING bookmarked`,
+		storyID).Scan(&bookmarked)
+	return bookmarked, err
+}
+
 // SetRating records a thumbs rating (-1 or +1) on a story.
 func (r *StoryRepo) SetRating(ctx context.Context, storyID string, rating int) error {
 	return r.execOne(ctx, `UPDATE stories SET user_rating = $2 WHERE id = $1`, storyID, rating)

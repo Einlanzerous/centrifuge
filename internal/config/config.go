@@ -77,6 +77,16 @@ type Config struct {
 
 	// ScoringBatch is how many newsletters the worker claims per poll.
 	ScoringBatch int
+
+	// CORSAllowOrigin is the Access-Control-Allow-Origin served by the read API
+	// for the browser frontend. Defaults to "*" (the API carries no
+	// credentials). Set to a specific origin to lock it down.
+	CORSAllowOrigin string
+
+	// PublicBaseURL is the externally reachable base URL of the service, used to
+	// build absolute links in the RSS feed. Empty falls back to the request's
+	// own scheme+host.
+	PublicBaseURL string
 }
 
 // Load reads configuration from the environment, applies defaults, and returns
@@ -97,6 +107,8 @@ func Load() (*Config, error) {
 		ScoringEnabled:   true,
 		ScoringInterval:  DefaultScoringInterval,
 		ScoringBatch:     DefaultScoringBatch,
+		CORSAllowOrigin:  getEnvDefault("CORS_ALLOW_ORIGIN", "*"),
+		PublicBaseURL:    strings.TrimRight(os.Getenv("PUBLIC_BASE_URL"), "/"),
 	}
 
 	if v := os.Getenv("PORT"); v != "" {

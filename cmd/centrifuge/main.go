@@ -70,7 +70,7 @@ func runServer(cfg *config.Config, logger *slog.Logger) error {
 	defer pool.Close()
 
 	ingestor := ingest.NewIngestor(pool, ingest.WithMaxBodyChars(cfg.IngestMaxChars))
-	srv := httpapi.NewServer(cfg, logger, ingestor)
+	srv := httpapi.NewServer(cfg, logger, ingestor, pool)
 
 	// The scoring worker runs decoupled from the HTTP path. Its lifecycle is
 	// tied to workerCtx, which is cancelled on shutdown so the loop drains.

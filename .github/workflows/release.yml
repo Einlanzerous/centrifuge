@@ -62,3 +62,11 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Notify construct-server
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.CONSTRUCT_DISPATCH_TOKEN }}
+          repository: Einlanzerous/construct-server
+          event-type: image-updated
+          client-payload: '{"image": "centrifuge", "version": "${{ needs.release-please.outputs.version }}"}'

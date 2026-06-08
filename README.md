@@ -146,7 +146,7 @@ All configuration is read from the environment.
 | `DATABASE_URL`     | yes      | —                                                                | Postgres connection string.                           |
 | `OLLAMA_URL`       | no       | `http://ollama:11434`                                            | Base URL of the Ollama server.                        |
 | `OLLAMA_MODEL`     | no       | `gemma4:31b`                                                     | Model tag used for relevance scoring.                 |
-| `OLLAMA_TIMEOUT_SECONDS` | no | `300`                                                          | Per-request timeout for one generate call (large digests can take minutes). |
+| `OLLAMA_TIMEOUT_SECONDS` | no | `900`                                                          | Per-request timeout for one generate call (large digests can take many minutes on gemma4:31b). |
 | `OLLAMA_MAX_RETRIES` | no     | `2`                                                              | Retries for a transient (network / 5xx) Ollama failure. |
 | `INGEST_TOKEN`     | no       | —                                                                | Token authenticating inbound ingestion requests (`X-Ingest-Token` header or `?token=`). Unset disables the check (local dev). |
 | `INGEST_MAX_CHARS` | no       | `24000`                                                          | Cap on the cleaned body text fed to the scorer; `0` disables truncation. |

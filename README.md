@@ -54,6 +54,7 @@ Supporting packages: `internal/config` (env loading), `internal/log`
 - `GET /healthz` → `200 {"status":"ok"}`
 - `POST /ingest` — raw RFC822 email (the production webhook). See below.
 - `POST /ingest/html` — JSON `{html, subject?, from?, from_name?, message_id?, received_at?}` drop, for backfill / test-fire.
+- **Read API** (`/api/*` + `/feed.xml`) — the read side backing the UI. See [Read API](#read-api).
 
 ## Ingestion
 
@@ -137,6 +138,36 @@ debugging; `-prep-only` prints the exact prepped body the model would see and
 skips the model entirely (no Ollama needed) — handy for inspecting the sanitizer
 output or deriving a clean text fixture from raw newsletter HTML.
 
+## Read API
+
+The read side (`internal/httpapi`) serves the dashboard, archive, and feed the
+UI (CTFG-27, design in `design/DESIGN.md`) renders. Everything operates on
+**stories** — the scored unit — not raw newsletters, and each story is returned
+as a flat JSON item with its source name inline, a `rating` token
+(`up`/`down`/`none`), `read` (opened) flag, and a `topic_color`. Topic colors
+are derived from a hash of the (dynamic, growing) topic name, so a topic keeps a
+stable color as the taxonomy evolves.
+
+| Endpoint | Purpose |
+| -------- | ------- |
+| `GET /api/today` | "Since You Last Looked": scored stories newer than the session's `last_viewed_at`, with topic-count chips and an `is_empty` flag. `?brief=1` fills the empty state with older unsurfaced stories. |
+| `POST /api/today/seen` | Mark the feed seen — advances `last_viewed_at` to now. |
+| `GET /api/archive` | Day-grouped curated stories. Filters: `topic`, `source`, `from`/`to` (RFC3339 or `YYYY-MM-DD`), `q` (search), `limit`/`offset`. Includes source + topic registries for the sidebar. |
+| `GET /api/items/{id}` | Full item incl. raw HTML `body` (Reader modal); stamps the story opened. |
+| `POST /api/items/{id}/bookmark` | Toggle the bookmark; returns the new state. |
+| `POST /api/items/{id}/rate` | Body `{rating: "up"\|"down"\|"none"}`. |
+| `POST /api/items/{id}/mark-ad` | "Mark as ad" correction — flips `kind` to `ad`, removing it from the curated feeds (and a strong negative engagement signal). |
+| `GET /api/topics` | Topic registry: dynamic `primary_topic`s with counts + palette colors. |
+| `GET /api/sources` | Source rollup ("best sources"): per-source counts, average relevance, engagement. |
+| `GET /feed.xml` | RSS 2.0 reflection of recent curated stories. |
+
+Engagement mutations (bookmark / rate / mark-ad) are the capture points the
+focus model (CTFG-28 / CTFG-29) will consume. The session model is single-user
+today (one implicit `default` session); the schema is keyed by a unique label so
+a future authenticated build adds per-identity rows without a migration. CORS is
+enabled (`CORS_ALLOW_ORIGIN`, default `*`) for the browser frontend, and
+`PUBLIC_BASE_URL` backs absolute links in the feed.
+
 ## Configuration
 
 All configuration is read from the environment.
@@ -156,6 +187,8 @@ All configuration is read from the environment.
 | `SCORING_ENABLED`  | no       | `true`                                                           | Run the background scoring worker. `false` = intake-only. |
 | `SCORING_INTERVAL_SECONDS` | no | `30`                                                          | How often the worker polls for pending newsletters.   |
 | `SCORING_BATCH_SIZE` | no     | `5`                                                              | Newsletters claimed per poll (processed sequentially). |
+| `CORS_ALLOW_ORIGIN` | no      | `*`                                                              | `Access-Control-Allow-Origin` served by the read API for the browser frontend. |
+| `PUBLIC_BASE_URL`  | no       | — (request-derived)                                              | Externally reachable base URL for absolute `/feed.xml` links; falls back to the request's scheme+host. |
 
 A missing `DATABASE_URL` is reported as a clear startup error (the process exits
 non-zero rather than panicking).

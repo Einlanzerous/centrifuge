@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Centrifuge — Newsletter Curator</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="description" content="Centrifuge — a curated reading view of your newsletters." />
+
+    <!-- Fonts: Geist + Instrument Serif + Geist Mono -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- Set the theme class before paint to avoid a flash. -->
+    <script>
+      try {
+        const stored = localStorage.getItem('centrifuge:dark')
+        const dark = stored === null
+          ? window.matchMedia('(prefers-color-scheme: dark)').matches
+          : stored === 'true'
+        if (dark) document.documentElement.classList.add('dark')
+      } catch (_) {}
+    </script>
+  </head>
+  <body class="text-ink-800 dark:text-ink-100">
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

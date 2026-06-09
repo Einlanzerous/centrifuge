@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Einlanzerous/centrifuge"
 	"github.com/Einlanzerous/centrifuge/internal/ai"
 	"github.com/Einlanzerous/centrifuge/internal/config"
 	"github.com/Einlanzerous/centrifuge/internal/db"
@@ -27,7 +28,8 @@ import (
 	"github.com/Einlanzerous/centrifuge/internal/worker"
 )
 
-// migrationsDir is the directory holding versioned SQL migrations.
+// migrationsDir is the path, within the embedded filesystem, holding the
+// versioned SQL migrations.
 const migrationsDir = "migrations"
 
 func main() {
@@ -55,7 +57,7 @@ func main() {
 func runMigrate(cfg *config.Config, logger *slog.Logger) {
 	ctx := context.Background()
 	logger.Info("applying migrations", "dir", migrationsDir)
-	if err := db.Migrate(ctx, cfg.DatabaseURL, migrationsDir); err != nil {
+	if err := db.Migrate(ctx, cfg.DatabaseURL, centrifuge.MigrationsFS, migrationsDir); err != nil {
 		logger.Error("migrate", "error", err)
 		os.Exit(1)
 	}

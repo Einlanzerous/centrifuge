@@ -3,9 +3,9 @@ package ingest
 import (
 	"context"
 	"os"
-	"path/filepath"
 	"testing"
 
+	"github.com/Einlanzerous/centrifuge"
 	"github.com/Einlanzerous/centrifuge/internal/db"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -25,11 +25,7 @@ func TestMain(m *testing.M) {
 	}
 
 	ctx := context.Background()
-	dir, err := filepath.Abs(filepath.Join("..", "..", "migrations"))
-	if err != nil {
-		panic("resolve migrations dir: " + err.Error())
-	}
-	if err := db.Migrate(ctx, url, dir); err != nil {
+	if err := db.Migrate(ctx, url, centrifuge.MigrationsFS, "migrations"); err != nil {
 		panic("migrate test db: " + err.Error())
 	}
 

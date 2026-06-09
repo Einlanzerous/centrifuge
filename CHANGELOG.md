@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.1.0](https://github.com/Einlanzerous/centrifuge/compare/v1.0.0...v1.1.0) (2026-06-08)
+
+
+### Features
+
+* auto-deploy to construct-server on release (CTFG-25) ([6fb25a3](https://github.com/Einlanzerous/centrifuge/commit/6fb25a31a8c81da7e03c61451228726c6dbb2fd1))
+* auto-deploy to construct-server on release (CTFG-25) ([91eea1b](https://github.com/Einlanzerous/centrifuge/commit/91eea1b058fe483379516cb1b47023c2bd9f8939))
+* read-side HTTP API + RSS feed backing the UI (CTFG-26) ([14b5dd2](https://github.com/Einlanzerous/centrifuge/commit/14b5dd2556fc9434116beb84b8d90be2fc06ae49))
+* read-side HTTP API + user_sessions (CTFG-26) ([138ad77](https://github.com/Einlanzerous/centrifuge/commit/138ad7711c7aa6ebe14989889003e63e3a9e8308))
+* user_sessions migration + read-side DB layer (CTFG-26) ([e87acde](https://github.com/Einlanzerous/centrifuge/commit/e87acde2e7d37f60800f3c4ec509076ff77c02b7))
+
 ## 1.0.0 (2026-06-08)
 
 

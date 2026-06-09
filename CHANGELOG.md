@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.1](https://github.com/Einlanzerous/centrifuge/compare/v1.1.0...v1.1.1) (2026-06-09)
+
+
+### Bug Fixes
+
+* embed migrations so deploy doesn't crash-loop (CTFG-25) ([1dc8a29](https://github.com/Einlanzerous/centrifuge/commit/1dc8a2906776c623e8fe66f196b6b1036392e7a7))
+* embed migrations so deploy doesn't crash-loop (CTFG-25) ([19b1777](https://github.com/Einlanzerous/centrifuge/commit/19b17772e331d94525e65a827a051b7ad53dff4e))
+
 ## [1.1.0](https://github.com/Einlanzerous/centrifuge/compare/v1.0.0...v1.1.0) (2026-06-08)
 
 

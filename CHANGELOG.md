@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.2.0](https://github.com/Einlanzerous/centrifuge/compare/v1.1.1...v1.2.0) (2026-06-09)
+
+
+### Features
+
+* build & push the frontend image on release (CTFG-38) ([f8a62ea](https://github.com/Einlanzerous/centrifuge/commit/f8a62ea20ddafe32c7873ede223480449468494f))
+* build & push the frontend image on release (CTFG-38) ([17f2a1a](https://github.com/Einlanzerous/centrifuge/commit/17f2a1ab568509f572d9b3427ec21f0815812455))
+* reader read-API extensions — hero image, per-story text, segmented body (CTFG-27) ([284b15c](https://github.com/Einlanzerous/centrifuge/commit/284b15cf54bf0927379ec731f15cfdf187c11659))
+* Vue 3 + Tailwind reading UI (CTFG-27) ([66f1f4f](https://github.com/Einlanzerous/centrifuge/commit/66f1f4f919270fd23ec93ac4fc9da514c0f49a55))
+* Vue 3 + Tailwind reading UI (CTFG-27) ([23f236b](https://github.com/Einlanzerous/centrifuge/commit/23f236b5ee50828495cbe2612dcaa6551d31c71c))
+
 ## [1.1.1](https://github.com/Einlanzerous/centrifuge/compare/v1.1.0...v1.1.1) (2026-06-09)
 
 

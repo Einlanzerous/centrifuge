@@ -60,7 +60,7 @@ func (in *Ingestor) Ingest(ctx context.Context, msg InboundMessage) (*Result, er
 	identity := normalizeAddr(msg.FromAddr)
 	name := msg.FromName
 	if name == "" {
-		name = identity
+		name = fallbackSourceName(identity)
 	}
 	src, err := in.sources.GetOrCreate(ctx, db.SourceKindNewsletter, identity, name)
 	if err != nil {
@@ -108,6 +108,18 @@ func normalizeAddr(addr string) string {
 		return "unknown"
 	}
 	return a
+}
+
+// fallbackSourceName derives a display name when the sender carries no display
+// name. The local part is friendlier than the full address ("itbrew" rather
+// than "itbrew@morningbrew.com"). Proper brand names come from the From display
+// name (the live RFC822 feed carries it) or manual curation (source management
+// is a follow-up); this is just a sane default for the bare-address case.
+func fallbackSourceName(identity string) string {
+	if i := strings.IndexByte(identity, '@'); i > 0 {
+		return identity[:i]
+	}
+	return identity
 }
 
 // prepareBody produces the cleaned, capped body text persisted with the

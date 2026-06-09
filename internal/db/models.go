@@ -78,6 +78,9 @@ type Story struct {
 	Title        *string
 	URL          *string
 	Snippet      *string
+	// Optional hero image for the card/reader "art" header; nil falls back to
+	// the generated topic gradient (CTFG-27).
+	ImageURL *string
 
 	// Scoring (nil until the worker scores the story).
 	Summary        *string

@@ -18,6 +18,7 @@ type itemDTO struct {
 	URL            string    `json:"url,omitempty"`
 	PrimaryTopic   string    `json:"primary_topic"`
 	TopicColor     string    `json:"topic_color"`
+	ImageURL       string    `json:"image_url,omitempty"`
 	Labels         []string  `json:"labels"`
 	Section        string    `json:"section,omitempty"`
 	Kind           string    `json:"kind"`
@@ -29,6 +30,8 @@ type itemDTO struct {
 	Rating         string    `json:"rating"` // "up" | "down" | "none"
 	Read           bool      `json:"read"`
 	Body           string    `json:"body,omitempty"`
+	Segmented      bool      `json:"segmented"`         // body is a multi-story digest, not this story
+	Content        string    `json:"content,omitempty"` // this story's verbatim text (digest items)
 }
 
 // toItem maps an enriched StoryView to its JSON DTO. withBody includes the raw
@@ -42,6 +45,7 @@ func toItem(v db.StoryView, withBody bool) itemDTO {
 		URL:            deref(v.URL),
 		PrimaryTopic:   deref(v.PrimaryTopic),
 		TopicColor:     topicColor(deref(v.PrimaryTopic)),
+		ImageURL:       deref(v.ImageURL),
 		Labels:         v.Labels,
 		Section:        deref(v.Section),
 		Kind:           v.Kind,
@@ -52,12 +56,14 @@ func toItem(v db.StoryView, withBody bool) itemDTO {
 		Bookmarked:     v.Bookmarked,
 		Rating:         ratingToken(v.UserRating),
 		Read:           v.OpenedAt != nil,
+		Segmented:      v.Segmented,
 	}
 	if it.Labels == nil {
 		it.Labels = []string{}
 	}
 	if withBody {
 		it.Body = deref(v.Body)
+		it.Content = deref(v.SegmentText)
 	}
 	return it
 }

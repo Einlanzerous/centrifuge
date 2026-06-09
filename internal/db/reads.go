@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"golang.org/x/net/html"
 )
 
 // StoryView is a story enriched with the read-side fields the API serves: its
@@ -18,7 +20,15 @@ type StoryView struct {
 	Story
 	SourceName string
 	ReceivedAt time.Time
-	Body       *string
+	// Body is the parent newsletter's raw HTML (detail endpoint only).
+	Body *string
+	// Segmented is true when the parent newsletter produced more than one story
+	// (a digest). The UI renders an essay's body inline but offers a digest's
+	// full newsletter behind a "view full" toggle.
+	Segmented bool
+	// SegmentText is this story's verbatim article text, sliced out of the parent
+	// newsletter's cleaned text (digest items only; nil when extraction misses).
+	SegmentText *string
 }
 
 // storyViewCols selects every story column (aliased st) plus the joined source
@@ -27,7 +37,7 @@ type StoryView struct {
 const storyViewCols = `st.id, st.newsletter_id, st.source_id, st.position, st.kind, st.section, ` +
 	`st.title, st.url, st.snippet, st.summary, st.relevance_score, st.primary_topic, st.labels, ` +
 	`st.model, st.prompt_version, st.scored_at, st.bookmarked, st.user_rating, st.opened_at, ` +
-	`s.name, COALESCE(n.received_at, n.ingested_at)`
+	`st.image_url, s.name, COALESCE(n.received_at, n.ingested_at)`
 
 const storyViewFrom = `FROM stories st
 JOIN sources s ON s.id = st.source_id
@@ -40,7 +50,7 @@ func scanStoryView(row pgx.Row) (*StoryView, error) {
 		&v.Section, &v.Title, &v.URL, &v.Snippet,
 		&v.Summary, &v.RelevanceScore, &v.PrimaryTopic, &labels, &v.Model, &v.PromptVersion, &v.ScoredAt,
 		&v.Bookmarked, &v.UserRating, &v.OpenedAt,
-		&v.SourceName, &v.ReceivedAt)
+		&v.ImageURL, &v.SourceName, &v.ReceivedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +176,12 @@ LIMIT $%d OFFSET $%d`, storyViewCols, storyViewFrom, where.String(), limitIdx, o
 // GetEnriched returns one story with its source name, received timestamp, and
 // the raw HTML body for the Reader modal. Returns pgx.ErrNoRows if unknown.
 func (r *StoryRepo) GetEnriched(ctx context.Context, storyID string) (*StoryView, error) {
-	const q = `SELECT ` + storyViewCols + `, n.raw_html
+	// Return the parent newsletter's raw HTML plus a "segmented" flag (more than
+	// one story => a digest). The UI renders an essay's body inline, but for a
+	// digest the same raw_html is the whole email, so it is shown only behind a
+	// "view full newsletter" toggle. Proper per-segment HTML is a follow-up.
+	const q = `SELECT ` + storyViewCols + `, n.raw_html,
+  (SELECT count(*) FROM stories sc WHERE sc.newsletter_id = n.id AND sc.kind = 'story') > 1
 ` + storyViewFrom + `
 WHERE st.id = $1`
 	var v StoryView
@@ -175,7 +190,7 @@ WHERE st.id = $1`
 		&v.Section, &v.Title, &v.URL, &v.Snippet,
 		&v.Summary, &v.RelevanceScore, &v.PrimaryTopic, &labels, &v.Model, &v.PromptVersion, &v.ScoredAt,
 		&v.Bookmarked, &v.UserRating, &v.OpenedAt,
-		&v.SourceName, &v.ReceivedAt, &v.Body)
+		&v.ImageURL, &v.SourceName, &v.ReceivedAt, &v.Body, &v.Segmented)
 	if err != nil {
 		return nil, err
 	}
@@ -184,7 +199,191 @@ WHERE st.id = $1`
 			return nil, fmt.Errorf("unmarshal labels: %w", err)
 		}
 	}
+
+	// For a digest item, slice this story's verbatim text (with paragraph breaks)
+	// out of the parent newsletter's HTML, bounded by the surrounding stories.
+	// Best-effort: on a miss the UI falls back to the summary.
+	if v.Segmented && v.Body != nil {
+		sibs, err := r.siblingSnippets(ctx, v.NewsletterID)
+		if err != nil {
+			return nil, fmt.Errorf("sibling snippets: %w", err)
+		}
+		if seg := extractSegmentText(htmlToText(*v.Body), sibs, v.Position); seg != "" {
+			v.SegmentText = &seg
+		}
+	}
 	return &v, nil
+}
+
+// siblingSnippet pairs a story's position with its verbatim opening snippet,
+// used as a boundary anchor when slicing one segment out of the newsletter.
+type siblingSnippet struct {
+	position int
+	snippet  string
+}
+
+// siblingSnippets returns every story in a newsletter (any kind) ordered by
+// position, so adjacent stories bound each other's text span.
+func (r *StoryRepo) siblingSnippets(ctx context.Context, newsletterID string) ([]siblingSnippet, error) {
+	rows, err := r.db.Query(ctx,
+		`SELECT position, COALESCE(snippet, '') FROM stories WHERE newsletter_id = $1 ORDER BY position`,
+		newsletterID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []siblingSnippet
+	for rows.Next() {
+		var s siblingSnippet
+		if err := rows.Scan(&s.position, &s.snippet); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// readerSkippableTags are subtrees whose text is noise in the Reader.
+var readerSkippableTags = map[string]bool{
+	"script": true, "style": true, "head": true, "title": true, "noscript": true,
+}
+
+// blockTags introduce a line break in extracted text so paragraph and list
+// structure survives. Everything else is inline and its text is concatenated
+// verbatim — so a styled first letter ("T" + "reated") or a parenthesized link
+// ("(" + link + ")") does not gain stray spaces.
+var blockTags = map[string]bool{
+	"p": true, "br": true, "div": true, "li": true, "tr": true, "table": true,
+	"blockquote": true, "ul": true, "ol": true, "hr": true, "section": true,
+	"article": true, "header": true, "footer": true, "figure": true,
+	"figcaption": true, "h1": true, "h2": true, "h3": true, "h4": true,
+	"h5": true, "h6": true,
+}
+
+// htmlToText renders newsletter HTML to plain text that keeps paragraph breaks
+// (block elements become newlines) while concatenating inline text verbatim.
+// ingest.CleanText fully flattens whitespace for the scorer; the Reader instead
+// needs the structure preserved, so this is a separate, structure-aware pass.
+func htmlToText(rawHTML string) string {
+	z := html.NewTokenizer(strings.NewReader(rawHTML))
+	var b strings.Builder
+	skip := 0
+	for {
+		switch z.Next() {
+		case html.ErrorToken:
+			return normalizeBlockText(b.String())
+		case html.StartTagToken:
+			name, _ := z.TagName()
+			n := string(name)
+			if readerSkippableTags[n] {
+				skip++
+				continue
+			}
+			if skip == 0 && blockTags[n] {
+				b.WriteByte('\n')
+			}
+		case html.SelfClosingTagToken:
+			if name, _ := z.TagName(); skip == 0 && blockTags[string(name)] {
+				b.WriteByte('\n')
+			}
+		case html.EndTagToken:
+			name, _ := z.TagName()
+			n := string(name)
+			if readerSkippableTags[n] {
+				if skip > 0 {
+					skip--
+				}
+				continue
+			}
+			if skip == 0 && blockTags[n] {
+				b.WriteByte('\n')
+			}
+		case html.TextToken:
+			if skip == 0 {
+				b.Write(z.Text())
+			}
+		}
+	}
+}
+
+// normalizeBlockText collapses intra-line whitespace and limits blank-line runs
+// so the kept paragraph structure reads cleanly.
+func normalizeBlockText(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, ln := range lines {
+		lines[i] = strings.Join(strings.Fields(ln), " ")
+	}
+	out := strings.Join(lines, "\n")
+	for strings.Contains(out, "\n\n\n") {
+		out = strings.ReplaceAll(out, "\n\n\n", "\n\n")
+	}
+	return strings.TrimSpace(out)
+}
+
+// anchorRegexp builds a whitespace-tolerant matcher for a snippet's opening
+// words, used to locate that story's start inside the structured newsletter
+// text. Returns nil for snippets too short to anchor reliably.
+func anchorRegexp(snippet string) *regexp.Regexp {
+	words := strings.Fields(strings.TrimRight(snippet, ".… "))
+	if len(words) < 3 {
+		return nil
+	}
+	if len(words) > 10 {
+		words = words[:10]
+	}
+	for i, w := range words {
+		words[i] = regexp.QuoteMeta(w)
+	}
+	re, err := regexp.Compile(strings.Join(words, `\s+`))
+	if err != nil {
+		return nil
+	}
+	return re
+}
+
+// extractSegmentText slices the verbatim text (paragraph breaks intact) of the
+// story at position out of the structured newsletter text. Each story's snippet
+// is the literal start of its section, so the span runs from this story's anchor
+// to whichever other story's anchor comes next *physically* — sponsors/promos
+// are interleaved between stories and numbered out of physical order, so the
+// boundary can't rely on scorer position. Returns "" if the start can't be found.
+func extractSegmentText(text string, sibs []siblingSnippet, position int) string {
+	if strings.TrimSpace(text) == "" {
+		return ""
+	}
+	var cur *regexp.Regexp
+	for _, s := range sibs {
+		if s.position == position {
+			cur = anchorRegexp(s.snippet)
+			break
+		}
+	}
+	if cur == nil {
+		return ""
+	}
+	loc := cur.FindStringIndex(text)
+	if loc == nil {
+		return ""
+	}
+	start := loc[0]
+
+	end := len(text)
+	rest := text[start+1:]
+	for _, s := range sibs {
+		if s.position == position {
+			continue
+		}
+		re := anchorRegexp(s.snippet)
+		if re == nil {
+			continue
+		}
+		if l := re.FindStringIndex(rest); l != nil {
+			if e := start + 1 + l[0]; e < end {
+				end = e
+			}
+		}
+	}
+	return strings.TrimSpace(text[start:end])
 }
 
 // TopicCount is one row of the topic registry: a dynamic primary_topic and how

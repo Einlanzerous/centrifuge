@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.1](https://github.com/Einlanzerous/centrifuge/compare/v1.2.0...v1.2.1) (2026-06-10)
+
+
+### Bug Fixes
+
+* rename published images to /backend and /frontend (CTFG-38) ([a3d0387](https://github.com/Einlanzerous/centrifuge/commit/a3d0387cc78bac1e149d25859ec7e5a0cfb23523))
+* rename published images to /backend and /frontend (CTFG-38) ([d6f2d06](https://github.com/Einlanzerous/centrifuge/commit/d6f2d06b8925bbb810fdcc302197bd19bbd09131))
+
 ## [1.2.0](https://github.com/Einlanzerous/centrifuge/compare/v1.1.1...v1.2.0) (2026-06-09)
 
 

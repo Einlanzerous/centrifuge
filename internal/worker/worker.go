@@ -225,12 +225,13 @@ func (w *Worker) handleScoreError(ctx context.Context, nl db.Newsletter, items [
 // newsletter to scored — all in one transaction so a crash never leaves partial
 // stories behind a still-scoring newsletter. Only story-kind items get their
 // scoring fields written; ads/blurbs/promos are persisted unscored.
+//
+// (Re)scoring is idempotent (CTFG-40): any existing stories for the newsletter
+// are deleted first so a re-score REPLACES them rather than appending
+// duplicates. Reader engagement (bookmark / rating / opened) is carried over
+// best-effort, matched by URL — stories without a URL can't be matched and
+// reset, since re-segmentation gives them no stable identity.
 func (w *Worker) persist(ctx context.Context, nl db.Newsletter, items []ai.ScoredItem) error {
-	if len(items) == 0 {
-		// The model found nothing worth segmenting; still a clean completion.
-		return db.NewNewsletterRepo(w.pool).UpdateStatus(ctx, nl.ID, db.StatusScored)
-	}
-
 	tx, err := w.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -239,6 +240,25 @@ func (w *Worker) persist(ctx context.Context, nl db.Newsletter, items []ai.Score
 
 	stories := db.NewStoryRepo(tx)
 	newsletters := db.NewNewsletterRepo(tx)
+
+	// Snapshot engagement on the prior stories (if this is a re-score), then
+	// replace them. First scoring finds none and deletes nothing.
+	prior, err := stories.ListByNewsletter(ctx, nl.ID)
+	if err != nil {
+		return err
+	}
+	priorEng := engagementByURL(prior)
+	if _, err := stories.DeleteByNewsletter(ctx, nl.ID); err != nil {
+		return err
+	}
+
+	if len(items) == 0 {
+		// The model found nothing worth segmenting; still a clean completion.
+		if err := newsletters.UpdateStatus(ctx, nl.ID, db.StatusScored); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	}
 
 	rows := make([]db.Story, len(items))
 	for i, it := range items {
@@ -259,18 +279,20 @@ func (w *Worker) persist(ctx context.Context, nl db.Newsletter, items []ai.Score
 
 	model := w.scorer.Model()
 	for i := range inserted {
-		if inserted[i].Kind != db.KindStory {
-			continue
+		if inserted[i].Kind == db.KindStory {
+			it := items[i]
+			if err := stories.ScoreUpdate(ctx, inserted[i].ID, db.Score{
+				Summary:        it.Summary,
+				RelevanceScore: it.RelevanceScore,
+				PrimaryTopic:   it.PrimaryTopic,
+				Labels:         it.Labels,
+				Model:          model,
+				PromptVersion:  ai.PromptVersion,
+			}); err != nil {
+				return err
+			}
 		}
-		it := items[i]
-		if err := stories.ScoreUpdate(ctx, inserted[i].ID, db.Score{
-			Summary:        it.Summary,
-			RelevanceScore: it.RelevanceScore,
-			PrimaryTopic:   it.PrimaryTopic,
-			Labels:         it.Labels,
-			Model:          model,
-			PromptVersion:  ai.PromptVersion,
-		}); err != nil {
+		if err := reapplyEngagement(ctx, stories, inserted[i], priorEng); err != nil {
 			return err
 		}
 	}
@@ -279,6 +301,57 @@ func (w *Worker) persist(ctx context.Context, nl db.Newsletter, items []ai.Score
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// engagement is the reader signal carried across a re-score.
+type engagement struct {
+	bookmarked bool
+	rating     *int
+	openedAt   *time.Time
+}
+
+// engagementByURL snapshots reader engagement from prior stories, keyed by URL.
+// Stories with no URL, or with nothing to carry, are skipped.
+func engagementByURL(stories []db.Story) map[string]engagement {
+	out := make(map[string]engagement)
+	for _, s := range stories {
+		if s.URL == nil || *s.URL == "" {
+			continue
+		}
+		if !s.Bookmarked && s.UserRating == nil && s.OpenedAt == nil {
+			continue
+		}
+		out[*s.URL] = engagement{bookmarked: s.Bookmarked, rating: s.UserRating, openedAt: s.OpenedAt}
+	}
+	return out
+}
+
+// reapplyEngagement restores carried-over engagement onto a freshly inserted
+// story when its URL matches one seen before the re-score.
+func reapplyEngagement(ctx context.Context, stories *db.StoryRepo, s db.Story, prior map[string]engagement) error {
+	if len(prior) == 0 || s.URL == nil || *s.URL == "" {
+		return nil
+	}
+	e, ok := prior[*s.URL]
+	if !ok {
+		return nil
+	}
+	if e.bookmarked {
+		if err := stories.SetBookmark(ctx, s.ID, true); err != nil {
+			return err
+		}
+	}
+	if e.rating != nil {
+		if err := stories.SetRating(ctx, s.ID, *e.rating); err != nil {
+			return err
+		}
+	}
+	if e.openedAt != nil {
+		if err := stories.MarkOpened(ctx, s.ID, *e.openedAt); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // requeueStale flips any newsletter stuck in scoring (from an interrupted run)

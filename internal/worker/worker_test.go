@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/Einlanzerous/centrifuge/internal/ai"
 	"github.com/Einlanzerous/centrifuge/internal/db"
@@ -116,6 +117,82 @@ func TestProcessOneSegmentsScoresAndCompletes(t *testing.T) {
 	}
 	if stories[2].Kind != db.KindBlurb || stories[2].RelevanceScore != nil {
 		t.Errorf("blurb should be unscored: %+v", stories[2])
+	}
+}
+
+func TestProcessOneReScoreIsIdempotentAndCarriesEngagement(t *testing.T) {
+	pool := setupDB(t)
+	ctx := context.Background()
+	nl := seedPending(t, pool, "Digest", "lots of content")
+
+	const keepURL = "https://ex.com/keep"
+	scorer := &stubScorer{items: []ai.ScoredItem{
+		{Title: "Keep me", URL: keepURL, Kind: ai.KindStory, Summary: "s", RelevanceScore: 80, PrimaryTopic: "tech"},
+		{Title: "Sponsor", Kind: ai.KindAd, RelevanceScore: 0},
+	}}
+	w := quietWorker(pool, scorer)
+	repo := db.NewStoryRepo(pool)
+
+	// First scoring.
+	if err := w.processOne(ctx, nl); err != nil {
+		t.Fatalf("processOne #1: %v", err)
+	}
+	first, _ := repo.ListByNewsletter(ctx, nl.ID)
+	if len(first) != 2 {
+		t.Fatalf("after first score: %d stories, want 2", len(first))
+	}
+
+	// Reader engages with the URL'd story.
+	var keepID string
+	for _, s := range first {
+		if s.URL != nil && *s.URL == keepURL {
+			keepID = s.ID
+		}
+	}
+	if keepID == "" {
+		t.Fatal("kept story not found after first score")
+	}
+	opened := time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC)
+	if err := repo.SetBookmark(ctx, keepID, true); err != nil {
+		t.Fatalf("bookmark: %v", err)
+	}
+	if err := repo.SetRating(ctx, keepID, 1); err != nil {
+		t.Fatalf("rate: %v", err)
+	}
+	if err := repo.MarkOpened(ctx, keepID, opened); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	// Re-fire: score the same newsletter again (the deployed re-fire path).
+	if err := w.processOne(ctx, nl); err != nil {
+		t.Fatalf("processOne #2: %v", err)
+	}
+
+	second, _ := repo.ListByNewsletter(ctx, nl.ID)
+	if len(second) != 2 {
+		t.Fatalf("after re-score: %d stories, want 2 (no duplicates)", len(second))
+	}
+
+	var keep *db.Story
+	for i := range second {
+		if second[i].URL != nil && *second[i].URL == keepURL {
+			keep = &second[i]
+		}
+	}
+	if keep == nil {
+		t.Fatal("kept story missing after re-score")
+	}
+	if keep.ID == keepID {
+		t.Error("expected a fresh story row (new id) after re-score, got the old id")
+	}
+	if !keep.Bookmarked {
+		t.Error("bookmark not carried over")
+	}
+	if keep.UserRating == nil || *keep.UserRating != 1 {
+		t.Errorf("rating not carried over: %v", keep.UserRating)
+	}
+	if keep.OpenedAt == nil || !keep.OpenedAt.Equal(opened) {
+		t.Errorf("opened_at not carried over: got %v want %v", keep.OpenedAt, opened)
 	}
 }
 

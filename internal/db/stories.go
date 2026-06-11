@@ -145,6 +145,18 @@ func (r *StoryRepo) SetKind(ctx context.Context, storyID, kind string) error {
 	return r.execOne(ctx, `UPDATE stories SET kind = $2 WHERE id = $1`, storyID, kind)
 }
 
+// DeleteByNewsletter removes all of a newsletter's stories and returns the
+// number deleted. The worker calls this before (re)inserting so a re-score
+// replaces the prior stories instead of appending duplicates (CTFG-40); on a
+// newsletter's first scoring it deletes nothing.
+func (r *StoryRepo) DeleteByNewsletter(ctx context.Context, newsletterID string) (int64, error) {
+	ct, err := r.db.Exec(ctx, `DELETE FROM stories WHERE newsletter_id = $1`, newsletterID)
+	if err != nil {
+		return 0, err
+	}
+	return ct.RowsAffected(), nil
+}
+
 // ListByNewsletter returns a newsletter's stories in position order.
 func (r *StoryRepo) ListByNewsletter(ctx context.Context, newsletterID string) ([]Story, error) {
 	const q = `SELECT ` + storyCols + ` FROM stories WHERE newsletter_id = $1 ORDER BY position`

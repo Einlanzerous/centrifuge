@@ -90,6 +90,7 @@ func runServer(cfg *config.Config, logger *slog.Logger) error {
 		w := worker.New(pool, scorer,
 			worker.WithInterval(cfg.ScoringInterval),
 			worker.WithBatchSize(cfg.ScoringBatch),
+			worker.WithMaxScoringAttempts(cfg.ScoringMaxAttempts),
 			worker.WithLogger(logger),
 		)
 		workerWG.Add(1)

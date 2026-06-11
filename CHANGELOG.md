@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.4.0](https://github.com/Einlanzerous/centrifuge/compare/v1.3.0...v1.4.0) (2026-06-11)
+
+
+### Features
+
+* **scoring:** idempotent re-score + engagement carry-over (CTFG-40) ([e20ff94](https://github.com/Einlanzerous/centrifuge/commit/e20ff9405ec3b194bf84c1db0fff727b572f6768))
+* **scoring:** make re-score idempotent + carry engagement over (CTFG-40) ([4074947](https://github.com/Einlanzerous/centrifuge/commit/4074947a9d2b597b05606e1bce3ecb112d0534e0))
+
 ## [1.3.0](https://github.com/Einlanzerous/centrifuge/compare/v1.2.1...v1.3.0) (2026-06-11)
 
 

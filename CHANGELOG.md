@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.0](https://github.com/Einlanzerous/centrifuge/compare/v1.2.1...v1.3.0) (2026-06-11)
+
+
+### Features
+
+* **scoring:** retry + salvage truncated model output (CTFG-33) ([a364543](https://github.com/Einlanzerous/centrifuge/commit/a364543b9803b5db32ed5eb8410697f0cb07130c))
+* **scoring:** retry + salvage truncated model output (CTFG-33) ([52cc67d](https://github.com/Einlanzerous/centrifuge/commit/52cc67d28ba23fa5181267e25eb255fa28e8c768))
+
+
+### Bug Fixes
+
+* **scoring:** reject tweet-length stories + ignore email preheader (CTFG-39) ([ddf67ee](https://github.com/Einlanzerous/centrifuge/commit/ddf67eebc5f87ddc5c2f55669077325e086a4881))
+* **scoring:** reject tweet-length stories and ignore email preheader (CTFG-39) ([52d0ccb](https://github.com/Einlanzerous/centrifuge/commit/52d0ccb11e38d603feb86ce6a19f0e2d07addf55))
+
 ## [1.2.1](https://github.com/Einlanzerous/centrifuge/compare/v1.2.0...v1.2.1) (2026-06-10)
 
 

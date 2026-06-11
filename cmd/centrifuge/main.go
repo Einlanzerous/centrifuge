@@ -80,7 +80,9 @@ func runServer(cfg *config.Config, logger *slog.Logger) error {
 	defer stopWorker()
 	var workerWG sync.WaitGroup
 	if cfg.ScoringEnabled {
-		scoreOpts := map[string]any{}
+		// temperature 0 (greedy) prevents repetition spirals that blow the
+		// num_predict cap with zero salvageable items (CTFG-43).
+		scoreOpts := map[string]any{"temperature": cfg.OllamaTemperature}
 		if cfg.OllamaNumPredict > 0 {
 			scoreOpts["num_predict"] = cfg.OllamaNumPredict // cap output → runaway truncates fast (CTFG-42)
 		}

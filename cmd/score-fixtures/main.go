@@ -39,6 +39,7 @@ func main() {
 	maxChars := flag.Int("max-chars", config.DefaultIngestMaxChars, "cap on prepped body chars fed to the model")
 	timeout := flag.Duration("timeout", config.DefaultOllamaTimeout, "per-request Ollama timeout")
 	numPredict := flag.Int("num-predict", config.DefaultOllamaNumPredict, "cap on tokens generated per call (matches prod; 0 = unbounded)")
+	temperature := flag.Float64("temperature", config.DefaultOllamaTemperature, "sampling temperature (matches prod; 0 = greedy)")
 	raw := flag.Bool("raw", false, "print the model's unparsed JSON response per fixture (debug)")
 	prepOnly := flag.Bool("prep-only", false, "print the prepped body the model would see and skip scoring (no Ollama needed)")
 	flag.Parse()
@@ -58,7 +59,7 @@ func main() {
 
 	// temperature 0 keeps re-runs comparable; num_predict matches the prod cap so
 	// the eval reproduces runaway-truncation + salvage behavior (CTFG-42).
-	scoreOpts := map[string]any{"temperature": 0}
+	scoreOpts := map[string]any{"temperature": *temperature}
 	if *numPredict > 0 {
 		scoreOpts["num_predict"] = *numPredict
 	}

@@ -28,6 +28,12 @@ const (
 	// (~30 items) while keeping the worst case (~280s at 22 tok/s) well under
 	// OLLAMA_TIMEOUT_SECONDS — keep that ordering when tuning either value.
 	DefaultOllamaNumPredict = 6144
+	// DefaultOllamaTemperature pins sampling to greedy decoding. At the model's
+	// own default (~0.8) gemma4:31b occasionally enters a repetition spiral
+	// inside a long string value and never closes the JSON element, so the whole
+	// digest truncates with nothing salvageable (CTFG-43). 0 also matches the
+	// score-fixtures eval gate, so prod output is reproducible there.
+	DefaultOllamaTemperature = 0.0
 )
 
 // DefaultRelevanceTopics is the fallback topic list used to bias scoring when
@@ -64,6 +70,11 @@ type Config struct {
 	// num_predict). <= 0 leaves it unbounded (Ollama default), but the deployed
 	// default is finite to prevent runaway generations (CTFG-42).
 	OllamaNumPredict int
+
+	// OllamaTemperature is the sampling temperature passed on every scoring
+	// call. Always sent — 0 (the default) means greedy decoding, not "unset"
+	// (CTFG-43).
+	OllamaTemperature float64
 
 	// IngestToken authenticates inbound ingestion requests.
 	IngestToken string
@@ -118,6 +129,7 @@ func Load() (*Config, error) {
 		OllamaTimeout:      DefaultOllamaTimeout,
 		OllamaMaxRetries:   DefaultOllamaMaxRetries,
 		OllamaNumPredict:   DefaultOllamaNumPredict,
+		OllamaTemperature:  DefaultOllamaTemperature,
 		IngestToken:        os.Getenv("INGEST_TOKEN"),
 		IngestMaxChars:     DefaultIngestMaxChars,
 		Port:               DefaultPort,
@@ -170,6 +182,17 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("config: invalid OLLAMA_NUM_PREDICT %q: %w", v, err)
 		}
 		cfg.OllamaNumPredict = n
+	}
+
+	if v := os.Getenv("OLLAMA_TEMPERATURE"); v != "" {
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			return nil, fmt.Errorf("config: invalid OLLAMA_TEMPERATURE %q: %w", v, err)
+		}
+		if f < 0 {
+			return nil, fmt.Errorf("config: OLLAMA_TEMPERATURE must be >= 0, got %v", f)
+		}
+		cfg.OllamaTemperature = f
 	}
 
 	if v := os.Getenv("INGEST_MAX_CHARS"); v != "" {

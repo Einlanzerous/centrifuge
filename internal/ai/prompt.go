@@ -9,7 +9,7 @@ import (
 // prompt_version) so results are attributable to the exact instructions that
 // produced them. Bump it whenever the prompt text or the expected output
 // contract below changes — the eval harness (CTFG-23) diffs across versions.
-const PromptVersion = "2026-06-07.1"
+const PromptVersion = "2026-06-10.1"
 
 // PromptInput is everything the prompt builder needs about one newsletter. The
 // caller derives Body from the cleaned, truncated text (Phase 2) so the model's
@@ -45,10 +45,20 @@ A newsletter may be a single essay (then there is exactly ONE item) or a digest
 of many items (then there are many). Preserve reading order.
 
 For EACH item, classify its kind:
-- "story": substantive editorial content worth reading (an article, essay, analysis, news item).
-- "blurb": a one-line mention, link roundup entry, or housekeeping note.
+- "story": substantive editorial content that develops across multiple sentences or
+  paragraphs (an article, essay, analysis, news item).
+- "blurb": a one-line mention, link roundup entry, headline-only teaser, or housekeeping note.
 - "ad": paid placement, sponsorship, or "this issue is brought to you by".
 - "promo": the publication promoting itself (merch, referrals, subscribe nags, event plugs).
+
+A single sentence, a headline, or a headline-with-teaser is NOT a "story" — it is a
+"blurb" (or "ad"/"promo" if it is selling something). Only classify an item as "story"
+when its body actually develops the topic in more than one or two sentences. If the only
+text you can find for an item is one short sentence, it is not a story.
+
+Newsletters embed a hidden preheader/preview line (the teaser shown in the inbox) at the
+very top, often duplicated and padded with invisible spacer characters. NEVER treat that
+preheader/teaser as an item's content, and never use it as the snippet.
 
 Score relevance from 0-100 for how well the item matches the reader's focus topics:
 `)
@@ -63,7 +73,7 @@ none fits well. primary_topic is exactly ONE label; labels is 0-5 secondary tags
 Return ONLY a JSON array (no prose, no markdown fences). Each element:
 {
   "title": "short item title",
-  "snippet": "a short verbatim-ish excerpt or the lead sentence",
+  "snippet": "the lead sentence of the item's actual body (NOT the email's preview/teaser line)",
   "url": "the item's primary link if present, else omit or empty",
   "kind": "story|blurb|ad|promo",
   "section": "the publication's section heading for this item if any, else omit",

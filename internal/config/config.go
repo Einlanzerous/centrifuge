@@ -11,15 +11,16 @@ import (
 
 // Defaults applied when the corresponding environment variable is unset.
 const (
-	DefaultOllamaURL        = "http://ollama:11434"
-	DefaultModel            = "gemma4:31b"
-	DefaultPort             = 8080
-	DefaultLogLevel         = "info"
-	DefaultIngestMaxChars   = 24000
-	DefaultOllamaTimeout    = 900 * time.Second
-	DefaultOllamaMaxRetries = 2
-	DefaultScoringInterval  = 30 * time.Second
-	DefaultScoringBatch     = 5
+	DefaultOllamaURL          = "http://ollama:11434"
+	DefaultModel              = "gemma4:31b"
+	DefaultPort               = 8080
+	DefaultLogLevel           = "info"
+	DefaultIngestMaxChars     = 24000
+	DefaultOllamaTimeout      = 900 * time.Second
+	DefaultOllamaMaxRetries   = 2
+	DefaultScoringInterval    = 30 * time.Second
+	DefaultScoringBatch       = 5
+	DefaultScoringMaxAttempts = 3
 )
 
 // DefaultRelevanceTopics is the fallback topic list used to bias scoring when
@@ -78,6 +79,11 @@ type Config struct {
 	// ScoringBatch is how many newsletters the worker claims per poll.
 	ScoringBatch int
 
+	// ScoringMaxAttempts bounds how many times a newsletter whose model output
+	// came back truncated is re-scored before the worker keeps what it salvaged
+	// or marks it failed (CTFG-33).
+	ScoringMaxAttempts int
+
 	// CORSAllowOrigin is the Access-Control-Allow-Origin served by the read API
 	// for the browser frontend. Defaults to "*" (the API carries no
 	// credentials). Set to a specific origin to lock it down.
@@ -94,21 +100,22 @@ type Config struct {
 // required variable is missing or a value cannot be parsed.
 func Load() (*Config, error) {
 	cfg := &Config{
-		DatabaseURL:      os.Getenv("DATABASE_URL"),
-		OllamaURL:        getEnvDefault("OLLAMA_URL", DefaultOllamaURL),
-		OllamaModel:      getEnvDefault("OLLAMA_MODEL", DefaultModel),
-		OllamaTimeout:    DefaultOllamaTimeout,
-		OllamaMaxRetries: DefaultOllamaMaxRetries,
-		IngestToken:      os.Getenv("INGEST_TOKEN"),
-		IngestMaxChars:   DefaultIngestMaxChars,
-		Port:             DefaultPort,
-		LogLevel:         getEnvDefault("LOG_LEVEL", DefaultLogLevel),
-		RelevanceTopics:  parseTopics(os.Getenv("RELEVANCE_TOPICS")),
-		ScoringEnabled:   true,
-		ScoringInterval:  DefaultScoringInterval,
-		ScoringBatch:     DefaultScoringBatch,
-		CORSAllowOrigin:  getEnvDefault("CORS_ALLOW_ORIGIN", "*"),
-		PublicBaseURL:    strings.TrimRight(os.Getenv("PUBLIC_BASE_URL"), "/"),
+		DatabaseURL:        os.Getenv("DATABASE_URL"),
+		OllamaURL:          getEnvDefault("OLLAMA_URL", DefaultOllamaURL),
+		OllamaModel:        getEnvDefault("OLLAMA_MODEL", DefaultModel),
+		OllamaTimeout:      DefaultOllamaTimeout,
+		OllamaMaxRetries:   DefaultOllamaMaxRetries,
+		IngestToken:        os.Getenv("INGEST_TOKEN"),
+		IngestMaxChars:     DefaultIngestMaxChars,
+		Port:               DefaultPort,
+		LogLevel:           getEnvDefault("LOG_LEVEL", DefaultLogLevel),
+		RelevanceTopics:    parseTopics(os.Getenv("RELEVANCE_TOPICS")),
+		ScoringEnabled:     true,
+		ScoringInterval:    DefaultScoringInterval,
+		ScoringBatch:       DefaultScoringBatch,
+		ScoringMaxAttempts: DefaultScoringMaxAttempts,
+		CORSAllowOrigin:    getEnvDefault("CORS_ALLOW_ORIGIN", "*"),
+		PublicBaseURL:      strings.TrimRight(os.Getenv("PUBLIC_BASE_URL"), "/"),
 	}
 
 	if v := os.Getenv("PORT"); v != "" {
@@ -183,6 +190,17 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("config: SCORING_BATCH_SIZE must be > 0, got %d", n)
 		}
 		cfg.ScoringBatch = n
+	}
+
+	if v := os.Getenv("SCORING_MAX_ATTEMPTS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("config: invalid SCORING_MAX_ATTEMPTS %q: %w", v, err)
+		}
+		if n < 1 {
+			return nil, fmt.Errorf("config: SCORING_MAX_ATTEMPTS must be >= 1, got %d", n)
+		}
+		cfg.ScoringMaxAttempts = n
 	}
 
 	if err := cfg.validate(); err != nil {

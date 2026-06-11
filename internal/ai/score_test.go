@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -164,6 +165,61 @@ func TestParseItemsEmptyArray(t *testing.T) {
 	}
 	if items != nil {
 		t.Errorf("items = %v, want nil for empty array", items)
+	}
+}
+
+func TestParseItemsSalvagesTruncatedArray(t *testing.T) {
+	// A digest cut off mid-third-object (CTFG-33): the two complete items are
+	// salvaged and a *TruncatedError is returned so the worker can retry and
+	// fall back to the partial result instead of losing the whole newsletter.
+	raw := `[{"title":"first","kind":"story","relevance_score":90},` +
+		`{"title":"second","kind":"blurb","relevance_score":40},` +
+		`{"title":"thir`
+	items, err := ParseItems(raw)
+	var te *TruncatedError
+	if !errors.As(err, &te) {
+		t.Fatalf("err = %v, want *TruncatedError", err)
+	}
+	if len(items) != 2 || items[0].Title != "first" || items[1].Title != "second" {
+		t.Fatalf("salvaged items = %+v, want the two complete ones", items)
+	}
+	if te.Recovered != 2 {
+		t.Errorf("Recovered = %d, want 2", te.Recovered)
+	}
+}
+
+func TestParseItemsTruncatedBeforeFirstItem(t *testing.T) {
+	// Cut off before any object closes: truncation is still signaled (the worker
+	// retries) but nothing is salvaged.
+	items, err := ParseItems(`[{"title":"only par`)
+	var te *TruncatedError
+	if !errors.As(err, &te) {
+		t.Fatalf("err = %v, want *TruncatedError", err)
+	}
+	if len(items) != 0 {
+		t.Errorf("items = %+v, want none salvaged", items)
+	}
+}
+
+func TestScanArrayElements(t *testing.T) {
+	// Braces inside a string value and a nested object must not confuse the depth
+	// count; a properly closed array reports closed=true.
+	closed := `[{"title":"a } brace in string","labels":["x"]},{"title":"b","meta":{"k":"v"}}]`
+	elems, ok := scanArrayElements(closed)
+	if !ok {
+		t.Error("closed array reported truncated")
+	}
+	if len(elems) != 2 {
+		t.Fatalf("got %d elems, want 2", len(elems))
+	}
+
+	// Truncated mid-second-object: one complete element, closed=false.
+	elems, ok = scanArrayElements(`[{"title":"a"},{"title":"b","x":`)
+	if ok {
+		t.Error("truncated array reported closed")
+	}
+	if len(elems) != 1 {
+		t.Errorf("got %d elems, want 1 complete before truncation", len(elems))
 	}
 }
 

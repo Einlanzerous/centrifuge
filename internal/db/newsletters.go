@@ -14,12 +14,13 @@ type NewsletterRepo struct{ db DBTX }
 func NewNewsletterRepo(db DBTX) *NewsletterRepo { return &NewsletterRepo{db: db} }
 
 const newsletterCols = `id, source_id, message_id, subject, raw_html, body_text, ` +
-	`received_at, dedupe_hash, ingested_at, processing_status`
+	`received_at, dedupe_hash, ingested_at, processing_status, scoring_attempts, scoring_error`
 
 func scanNewsletter(row pgx.Row) (*Newsletter, error) {
 	var n Newsletter
 	err := row.Scan(&n.ID, &n.SourceID, &n.MessageID, &n.Subject, &n.RawHTML,
-		&n.BodyText, &n.ReceivedAt, &n.DedupeHash, &n.IngestedAt, &n.ProcessingStatus)
+		&n.BodyText, &n.ReceivedAt, &n.DedupeHash, &n.IngestedAt, &n.ProcessingStatus,
+		&n.ScoringAttempts, &n.ScoringError)
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +126,7 @@ func (r *NewsletterRepo) FetchByStatus(ctx context.Context, status string, limit
 // skipped rather than blocked on. An empty slice means nothing was pending.
 func (r *NewsletterRepo) ClaimPending(ctx context.Context, limit int) ([]Newsletter, error) {
 	const q = `
-UPDATE newsletters SET processing_status = $2
+UPDATE newsletters SET processing_status = $2, scoring_attempts = scoring_attempts + 1
 WHERE id IN (
     SELECT id FROM newsletters
     WHERE processing_status = $1
@@ -155,6 +156,39 @@ RETURNING ` + newsletterCols
 // pgx.ErrNoRows if no newsletter has the given id.
 func (r *NewsletterRepo) UpdateStatus(ctx context.Context, id, status string) error {
 	ct, err := r.db.Exec(ctx, `UPDATE newsletters SET processing_status = $2 WHERE id = $1`, id, status)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
+// Requeue flips a newsletter back to pending_scoring for another scoring attempt
+// (the next claim re-increments scoring_attempts) and clears any prior
+// scoring_error. Used by the worker to retry a transient failure. Returns
+// pgx.ErrNoRows if no newsletter has the given id.
+func (r *NewsletterRepo) Requeue(ctx context.Context, id string) error {
+	ct, err := r.db.Exec(ctx,
+		`UPDATE newsletters SET processing_status = $2, scoring_error = NULL WHERE id = $1`,
+		id, StatusPending)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
+// MarkFailed transitions a newsletter to failed and records the reason in
+// scoring_error so the failure is diagnosable without log-diving. Returns
+// pgx.ErrNoRows if no newsletter has the given id.
+func (r *NewsletterRepo) MarkFailed(ctx context.Context, id, reason string) error {
+	ct, err := r.db.Exec(ctx,
+		`UPDATE newsletters SET processing_status = $2, scoring_error = $3 WHERE id = $1`,
+		id, StatusFailed, reason)
 	if err != nil {
 		return err
 	}

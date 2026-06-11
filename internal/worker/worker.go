@@ -21,6 +21,11 @@ import (
 const (
 	DefaultInterval  = 30 * time.Second
 	DefaultBatchSize = 5
+	// DefaultMaxScoringAttempts bounds how many times a newsletter whose model
+	// output came back truncated is re-scored before the worker gives up and
+	// keeps whatever was salvaged (or marks it failed). Transport failures are
+	// not bounded by this — the model recovering should always be retried.
+	DefaultMaxScoringAttempts = 3
 )
 
 // Scorer is the model seam the worker depends on. *ai.Scorer satisfies it; tests
@@ -32,11 +37,12 @@ type Scorer interface {
 
 // Worker polls and scores pending newsletters.
 type Worker struct {
-	pool      *pgxpool.Pool
-	scorer    Scorer
-	interval  time.Duration
-	batchSize int
-	logger    *slog.Logger
+	pool        *pgxpool.Pool
+	scorer      Scorer
+	interval    time.Duration
+	batchSize   int
+	maxAttempts int
+	logger      *slog.Logger
 }
 
 // Option configures a Worker.
@@ -60,6 +66,16 @@ func WithBatchSize(n int) Option {
 	}
 }
 
+// WithMaxScoringAttempts bounds re-scoring of a newsletter whose model output
+// keeps coming back truncated. Values < 1 are ignored.
+func WithMaxScoringAttempts(n int) Option {
+	return func(w *Worker) {
+		if n >= 1 {
+			w.maxAttempts = n
+		}
+	}
+}
+
 // WithLogger sets the worker's logger.
 func WithLogger(l *slog.Logger) Option {
 	return func(w *Worker) {
@@ -72,11 +88,12 @@ func WithLogger(l *slog.Logger) Option {
 // New builds a Worker over pool and scorer.
 func New(pool *pgxpool.Pool, scorer Scorer, opts ...Option) *Worker {
 	w := &Worker{
-		pool:      pool,
-		scorer:    scorer,
-		interval:  DefaultInterval,
-		batchSize: DefaultBatchSize,
-		logger:    slog.Default(),
+		pool:        pool,
+		scorer:      scorer,
+		interval:    DefaultInterval,
+		batchSize:   DefaultBatchSize,
+		maxAttempts: DefaultMaxScoringAttempts,
+		logger:      slog.Default(),
 	}
 	for _, opt := range opts {
 		opt(w)
@@ -158,25 +175,50 @@ func (w *Worker) processOne(ctx context.Context, nl db.Newsletter) error {
 
 	items, err := w.scorer.Score(ctx, in)
 	if err != nil {
-		return w.handleScoreError(ctx, nl, err)
+		return w.handleScoreError(ctx, nl, items, err)
 	}
 	return w.persist(ctx, nl, items)
 }
 
-// handleScoreError requeues on transient transport failures (the model may
-// recover) and marks failed on terminal ones (a decode/validation error won't
-// improve on retry), so a newsletter is never silently lost.
-func (w *Worker) handleScoreError(ctx context.Context, nl db.Newsletter, scoreErr error) error {
+// handleScoreError decides what to do when scoring returns an error, so a
+// newsletter is never silently lost:
+//
+//   - Transport failure (model down/slow): requeue unconditionally — the model
+//     will recover, and these don't count against the truncation budget.
+//   - Truncated output (CTFG-33): retry within the attempt budget; once exhausted,
+//     persist whatever items were salvaged, or mark failed if none survived.
+//   - Anything else (structural/validation error): terminal, mark failed.
+//
+// items carries any partial results the scorer salvaged from a truncated
+// response.
+func (w *Worker) handleScoreError(ctx context.Context, nl db.Newsletter, items []ai.ScoredItem, scoreErr error) error {
 	repo := db.NewNewsletterRepo(w.pool)
 
 	var te *ai.TransportError
 	if errors.As(scoreErr, &te) {
-		w.logger.Warn("scoring transient failure; requeuing", "newsletter", nl.ID, "error", scoreErr)
-		return repo.UpdateStatus(ctx, nl.ID, db.StatusPending)
+		w.logger.Warn("scoring transient transport failure; requeuing", "newsletter", nl.ID, "error", scoreErr)
+		return repo.Requeue(ctx, nl.ID)
+	}
+
+	var tr *ai.TruncatedError
+	if errors.As(scoreErr, &tr) {
+		if nl.ScoringAttempts < w.maxAttempts {
+			w.logger.Warn("scoring output truncated; requeuing for retry",
+				"newsletter", nl.ID, "attempt", nl.ScoringAttempts, "max", w.maxAttempts, "recovered", tr.Recovered)
+			return repo.Requeue(ctx, nl.ID)
+		}
+		if len(items) > 0 {
+			w.logger.Warn("scoring still truncated after retries; persisting salvaged items",
+				"newsletter", nl.ID, "attempts", nl.ScoringAttempts, "recovered", len(items))
+			return w.persist(ctx, nl, items)
+		}
+		w.logger.Error("scoring truncated with nothing salvageable after retries; marking failed",
+			"newsletter", nl.ID, "attempts", nl.ScoringAttempts)
+		return repo.MarkFailed(ctx, nl.ID, scoreErr.Error())
 	}
 
 	w.logger.Error("scoring terminal failure; marking failed", "newsletter", nl.ID, "error", scoreErr)
-	return repo.UpdateStatus(ctx, nl.ID, db.StatusFailed)
+	return repo.MarkFailed(ctx, nl.ID, scoreErr.Error())
 }
 
 // persist writes the segmented stories and their scores, then flips the

@@ -49,6 +49,12 @@ type Newsletter struct {
 	DedupeHash       *string
 	IngestedAt       time.Time
 	ProcessingStatus string
+	// ScoringAttempts counts how many times the worker has claimed this
+	// newsletter for scoring; the claim increments it. It bounds retries of
+	// transient (truncated) model output before the worker gives up (CTFG-33).
+	ScoringAttempts int
+	// ScoringError records why the newsletter was marked failed, nil otherwise.
+	ScoringError *string
 }
 
 // DefaultSessionLabel is the single implicit user's session label. Centrifuge

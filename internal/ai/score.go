@@ -95,6 +95,19 @@ type rawItem struct {
 	Labels         flexStrings `json:"labels"`
 }
 
+// TruncatedError signals the model's JSON array was cut off mid-output — a clean
+// 2xx whose content is an unterminated array (observed as "unexpected EOF" while
+// parsing). Unlike a structural parse error this is *transient*: a re-run often
+// completes, so the worker retries within a budget rather than failing outright.
+// Recovered is how many complete leading items were salvaged from the partial
+// output; ParseItems returns those items alongside this error so the worker can
+// keep them once retries are exhausted instead of losing the whole digest.
+type TruncatedError struct{ Recovered int }
+
+func (e *TruncatedError) Error() string {
+	return fmt.Sprintf("ai: model output truncated (recovered %d complete item(s))", e.Recovered)
+}
+
 // ParseItems strictly validates and normalizes a model response into scored
 // items. It tolerates the array being wrapped in an object (a common model
 // quirk under format:"json") but treats fundamentally unparseable output as an
@@ -104,32 +117,44 @@ type rawItem struct {
 // Individual useless items (no title and no snippet) are dropped; if every item
 // is dropped from a non-empty response, that's an error (the model returned
 // shapes but no content).
+//
+// When the model's array is truncated (CTFG-33), ParseItems salvages the
+// complete leading items and returns them together with a *TruncatedError, so
+// the worker can retry for a complete response and fall back to the salvaged
+// items rather than discarding everything.
 func ParseItems(raw string) ([]ScoredItem, error) {
-	arr, err := extractArray(raw)
+	arr, truncated, err := extractArray(raw)
 	if err != nil {
 		return nil, err
 	}
+	out := normalizeItems(arr)
+
+	if truncated {
+		return out, &TruncatedError{Recovered: len(out)}
+	}
 	if len(arr) == 0 {
-		return nil, nil
+		return nil, nil // a valid "nothing here" answer.
 	}
-
-	out := make([]ScoredItem, 0, len(arr))
-	for _, rm := range arr {
-		var ri rawItem
-		if err := json.Unmarshal(rm, &ri); err != nil {
-			// One malformed element shouldn't sink the whole newsletter; skip it.
-			continue
-		}
-		item, ok := normalizeItem(ri)
-		if ok {
-			out = append(out, item)
-		}
-	}
-
 	if len(out) == 0 {
 		return nil, errors.New("ai: response had items but none were usable")
 	}
 	return out, nil
+}
+
+// normalizeItems validates and normalizes each raw element, dropping the
+// unusable ones (one malformed or contentless element never sinks the batch).
+func normalizeItems(arr []json.RawMessage) []ScoredItem {
+	out := make([]ScoredItem, 0, len(arr))
+	for _, rm := range arr {
+		var ri rawItem
+		if err := json.Unmarshal(rm, &ri); err != nil {
+			continue
+		}
+		if item, ok := normalizeItem(ri); ok {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 // extractArray pulls the JSON array out of a model response. It accepts a bare
@@ -138,33 +163,47 @@ func ParseItems(raw string) ([]ScoredItem, error) {
 // robust to the two things models do even under structured output: wrapping the
 // JSON in a ```json fence, and appending trailing prose after the value (so it
 // decodes the FIRST value and ignores the rest).
-func extractArray(raw string) ([]json.RawMessage, error) {
+//
+// The bool return reports truncation: when the response is an array that was cut
+// off mid-output, extractArray returns the complete leading elements with
+// truncated=true (and a nil error) so ParseItems can salvage them.
+func extractArray(raw string) (items []json.RawMessage, truncated bool, err error) {
 	trimmed := stripFence(strings.TrimSpace(raw))
 	if trimmed == "" {
-		return nil, errors.New("ai: empty model response")
+		return nil, false, errors.New("ai: empty model response")
 	}
 
 	// Bare array — the expected shape. decodeFirst tolerates trailing bytes.
 	var arr []json.RawMessage
 	if err := decodeFirst(trimmed, &arr); err == nil {
-		return arr, nil
+		return arr, false, nil
 	}
 
 	// Object: look for an array-valued field (prefer common wrapper keys).
 	var obj map[string]json.RawMessage
 	if err := decodeFirst(trimmed, &obj); err != nil {
-		return nil, fmt.Errorf("ai: response is neither array nor object: %w", err)
+		// Neither a bare array nor an object decoded. If this is an array that
+		// was cut off mid-output, salvage the complete leading elements rather
+		// than losing the whole digest (CTFG-33). An unclosed array (no matching
+		// ']') is the truncation signal; even zero salvaged elements flags
+		// truncation so the worker retries.
+		if strings.HasPrefix(trimmed, "[") {
+			if elems, closed := scanArrayElements(trimmed); !closed {
+				return elems, true, nil
+			}
+		}
+		return nil, false, fmt.Errorf("ai: response is neither array nor object: %w", err)
 	}
 	for _, key := range []string{"items", "stories", "results", "segments", "data"} {
 		if v, ok := obj[key]; ok {
 			if a, err := asArray(v); err == nil {
-				return a, nil
+				return a, false, nil
 			}
 		}
 	}
 	for _, v := range obj {
 		if a, err := asArray(v); err == nil {
-			return a, nil
+			return a, false, nil
 		}
 	}
 
@@ -175,11 +214,74 @@ func extractArray(raw string) ([]json.RawMessage, error) {
 	if hasTitle || hasScore {
 		one, err := json.Marshal(obj)
 		if err != nil {
-			return nil, fmt.Errorf("ai: re-marshal single item: %w", err)
+			return nil, false, fmt.Errorf("ai: re-marshal single item: %w", err)
 		}
-		return []json.RawMessage{one}, nil
+		return []json.RawMessage{one}, false, nil
 	}
-	return nil, errors.New("ai: response object had no array of items")
+	return nil, false, errors.New("ai: response object had no array of items")
+}
+
+// scanArrayElements salvages the complete top-level JSON objects from a possibly
+// truncated array string. It returns each finished `{...}` element inside the
+// outer `[...]` and whether the array was properly closed with `]`. A response
+// cut off mid-array yields closed=false plus the elements that completed before
+// the truncation, letting the caller keep them. It is string- and escape-aware
+// so braces inside string values never confuse the depth count.
+func scanArrayElements(s string) (elems []json.RawMessage, closed bool) {
+	open := strings.IndexByte(s, '[')
+	if open < 0 {
+		return nil, false
+	}
+	for i := open + 1; i < len(s); {
+		switch s[i] {
+		case ']':
+			return elems, true
+		case '{':
+			obj, end, ok := scanObject(s, i)
+			if !ok {
+				return elems, false // object cut off mid-output
+			}
+			elems = append(elems, json.RawMessage(obj))
+			i = end
+		default:
+			i++ // whitespace, commas, stray tokens between elements
+		}
+	}
+	return elems, false
+}
+
+// scanObject returns the complete JSON object beginning at s[start]=='{', the
+// index just past its closing '}', and ok=false when the object is truncated.
+func scanObject(s string, start int) (obj string, end int, ok bool) {
+	depth := 0
+	inStr := false
+	esc := false
+	for i := start; i < len(s); i++ {
+		c := s[i]
+		if inStr {
+			switch {
+			case esc:
+				esc = false
+			case c == '\\':
+				esc = true
+			case c == '"':
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return s[start : i+1], i + 1, true
+			}
+		}
+	}
+	return "", len(s), false
 }
 
 // decodeFirst decodes the first JSON value in s into v, ignoring any trailing

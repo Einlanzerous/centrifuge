@@ -21,6 +21,13 @@ const (
 	DefaultScoringInterval    = 30 * time.Second
 	DefaultScoringBatch       = 5
 	DefaultScoringMaxAttempts = 3
+	// DefaultOllamaNumPredict caps how many tokens the model may generate per
+	// scoring call. Bounded output makes a model that fails to close its JSON
+	// truncate fast (→ salvage, CTFG-33) instead of running to the context limit
+	// or the client timeout and looping (CTFG-42). ~6k covers a large digest
+	// (~30 items) while keeping the worst case (~280s at 22 tok/s) well under
+	// OLLAMA_TIMEOUT_SECONDS — keep that ordering when tuning either value.
+	DefaultOllamaNumPredict = 6144
 )
 
 // DefaultRelevanceTopics is the fallback topic list used to bias scoring when
@@ -52,6 +59,11 @@ type Config struct {
 
 	// OllamaMaxRetries is how many times a transient Ollama failure is retried.
 	OllamaMaxRetries int
+
+	// OllamaNumPredict caps tokens generated per scoring call (Ollama's
+	// num_predict). <= 0 leaves it unbounded (Ollama default), but the deployed
+	// default is finite to prevent runaway generations (CTFG-42).
+	OllamaNumPredict int
 
 	// IngestToken authenticates inbound ingestion requests.
 	IngestToken string
@@ -105,6 +117,7 @@ func Load() (*Config, error) {
 		OllamaModel:        getEnvDefault("OLLAMA_MODEL", DefaultModel),
 		OllamaTimeout:      DefaultOllamaTimeout,
 		OllamaMaxRetries:   DefaultOllamaMaxRetries,
+		OllamaNumPredict:   DefaultOllamaNumPredict,
 		IngestToken:        os.Getenv("INGEST_TOKEN"),
 		IngestMaxChars:     DefaultIngestMaxChars,
 		Port:               DefaultPort,
@@ -149,6 +162,14 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("config: OLLAMA_MAX_RETRIES must be >= 0, got %d", n)
 		}
 		cfg.OllamaMaxRetries = n
+	}
+
+	if v := os.Getenv("OLLAMA_NUM_PREDICT"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("config: invalid OLLAMA_NUM_PREDICT %q: %w", v, err)
+		}
+		cfg.OllamaNumPredict = n
 	}
 
 	if v := os.Getenv("INGEST_MAX_CHARS"); v != "" {

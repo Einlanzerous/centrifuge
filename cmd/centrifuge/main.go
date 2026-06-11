@@ -80,12 +80,17 @@ func runServer(cfg *config.Config, logger *slog.Logger) error {
 	defer stopWorker()
 	var workerWG sync.WaitGroup
 	if cfg.ScoringEnabled {
+		scoreOpts := map[string]any{}
+		if cfg.OllamaNumPredict > 0 {
+			scoreOpts["num_predict"] = cfg.OllamaNumPredict // cap output → runaway truncates fast (CTFG-42)
+		}
 		scorer := ai.NewScorer(
 			ai.NewClient(cfg.OllamaURL, cfg.OllamaModel,
 				ai.WithTimeout(cfg.OllamaTimeout),
 				ai.WithMaxRetries(cfg.OllamaMaxRetries),
 			),
 			cfg.RelevanceTopics,
+			ai.WithGenerateOptions(scoreOpts),
 		)
 		w := worker.New(pool, scorer,
 			worker.WithInterval(cfg.ScoringInterval),

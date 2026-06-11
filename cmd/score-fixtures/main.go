@@ -38,6 +38,7 @@ func main() {
 	topicsFlag := flag.String("topics", getenv("RELEVANCE_TOPICS", ""), "comma-separated focus topics (default: built-in list)")
 	maxChars := flag.Int("max-chars", config.DefaultIngestMaxChars, "cap on prepped body chars fed to the model")
 	timeout := flag.Duration("timeout", config.DefaultOllamaTimeout, "per-request Ollama timeout")
+	numPredict := flag.Int("num-predict", config.DefaultOllamaNumPredict, "cap on tokens generated per call (matches prod; 0 = unbounded)")
 	raw := flag.Bool("raw", false, "print the model's unparsed JSON response per fixture (debug)")
 	prepOnly := flag.Bool("prep-only", false, "print the prepped body the model would see and skip scoring (no Ollama needed)")
 	flag.Parse()
@@ -55,11 +56,16 @@ func main() {
 		fail(fmt.Sprintf("no .html/.txt/.md fixtures found in %s", *dir))
 	}
 
+	// temperature 0 keeps re-runs comparable; num_predict matches the prod cap so
+	// the eval reproduces runaway-truncation + salvage behavior (CTFG-42).
+	scoreOpts := map[string]any{"temperature": 0}
+	if *numPredict > 0 {
+		scoreOpts["num_predict"] = *numPredict
+	}
 	scorer := ai.NewScorer(
 		ai.NewClient(*url, *model, ai.WithTimeout(*timeout)),
 		topics,
-		// temperature 0 keeps re-runs comparable for eyeballing deltas.
-		ai.WithGenerateOptions(map[string]any{"temperature": 0}),
+		ai.WithGenerateOptions(scoreOpts),
 	)
 
 	fmt.Printf("model=%s  url=%s  prompt=%s\n", *model, *url, ai.PromptVersion)

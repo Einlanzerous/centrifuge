@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.5.0](https://github.com/Einlanzerous/centrifuge/compare/v1.4.0...v1.5.0) (2026-06-11)
+
+
+### Features
+
+* **scoring:** cap output (num_predict) so runaways truncate fast (CTFG-42) ([17e5bb1](https://github.com/Einlanzerous/centrifuge/commit/17e5bb1317d691893643b7e36854758ab985a446))
+* **scoring:** cap output with num_predict so runaways truncate fast (CTFG-42) ([8039a99](https://github.com/Einlanzerous/centrifuge/commit/8039a990a509615fd808c5cfc692fb1956c791ef))
+
 ## [1.4.0](https://github.com/Einlanzerous/centrifuge/compare/v1.3.0...v1.4.0) (2026-06-11)
 
 

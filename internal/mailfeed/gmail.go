@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"time"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -120,8 +121,18 @@ func (c *gmailClient) GetRaw(ctx context.Context, id string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Gmail returns the raw message as web-safe (URL-encoded) base64.
-	return base64.URLEncoding.DecodeString(msg.Raw)
+	return decodeRaw(msg.Raw)
+}
+
+// decodeRaw decodes Gmail's web-safe base64 raw message. Gmail returns padded
+// base64url, but fall back to the unpadded variant defensively so a future
+// encoding change can't break every fetch (an undecodable message would
+// otherwise be retried fruitlessly on every poll).
+func decodeRaw(s string) ([]byte, error) {
+	if b, err := base64.URLEncoding.DecodeString(s); err == nil {
+		return b, nil
+	}
+	return base64.RawURLEncoding.DecodeString(s)
 }
 
 // MarkProcessed adds the processed label to a message.
@@ -168,12 +179,17 @@ func Authorize(ctx context.Context, clientID, clientSecret string) (string, erro
 			errCh <- fmt.Errorf("authorization denied: %s", e)
 			return
 		}
-		fmt.Fprintln(w, "Authorization complete. You can close this tab and return to the terminal.")
+		_, _ = fmt.Fprintln(w, "Authorization complete. You can close this tab and return to the terminal.")
 		codeCh <- q.Get("code")
 	})
 	srv := &http.Server{Handler: mux}
 	go func() { _ = srv.Serve(ln) }()
-	defer func() { _ = srv.Shutdown(context.Background()) }()
+	defer func() {
+		// Bound the shutdown so a wedged loopback connection can't hang the CLI.
+		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutCtx)
+	}()
 
 	authURL := cfg.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.ApprovalForce)
 	fmt.Println("Open this URL in a browser signed in as the newsletters account, then grant access:")

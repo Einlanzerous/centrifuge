@@ -146,27 +146,33 @@ func runServer(cfg *config.Config, logger *slog.Logger) error {
 	// The Gmail auto-feed (CTFG-24) polls outbound for new mail and feeds it
 	// through the same ingestor as /ingest. It shares the worker's lifecycle so
 	// it drains on shutdown. Off unless MAILFEED_ENABLED (it needs OAuth creds).
+	//
+	// Client construction does network I/O (token refresh + label resolution), so
+	// it runs inside the goroutine, not on the startup path: the feed is a
+	// non-critical background job, so a slow or failing Gmail must not block the
+	// HTTP server from listening nor take the whole process down — it logs and
+	// disables itself instead.
 	if cfg.MailfeedEnabled {
-		client, err := mailfeed.NewGmailClient(workerCtx, mailfeed.OAuthConfig{
-			ClientID:     cfg.GmailClientID,
-			ClientSecret: cfg.GmailClientSecret,
-			RefreshToken: cfg.GmailRefreshToken,
-			User:         cfg.GmailUser,
-			Query:        cfg.MailfeedQuery,
-			Label:        cfg.MailfeedLabel,
-		})
-		if err != nil {
-			return fmt.Errorf("init gmail feed: %w", err)
-		}
-		p := mailfeed.New(ingestor, client,
-			mailfeed.WithInterval(cfg.MailfeedInterval),
-			mailfeed.WithBatch(cfg.MailfeedBatch),
-			mailfeed.WithLogger(logger),
-		)
 		workerWG.Add(1)
 		go func() {
 			defer workerWG.Done()
-			p.Run(workerCtx)
+			client, err := mailfeed.NewGmailClient(workerCtx, mailfeed.OAuthConfig{
+				ClientID:     cfg.GmailClientID,
+				ClientSecret: cfg.GmailClientSecret,
+				RefreshToken: cfg.GmailRefreshToken,
+				User:         cfg.GmailUser,
+				Query:        cfg.MailfeedQuery,
+				Label:        cfg.MailfeedLabel,
+			})
+			if err != nil {
+				logger.Error("mail feed disabled: failed to initialize Gmail client", "error", err)
+				return
+			}
+			mailfeed.New(ingestor, client,
+				mailfeed.WithInterval(cfg.MailfeedInterval),
+				mailfeed.WithBatch(cfg.MailfeedBatch),
+				mailfeed.WithLogger(logger),
+			).Run(workerCtx)
 		}()
 	} else {
 		logger.Info("mail feed disabled (MAILFEED_ENABLED=false)")

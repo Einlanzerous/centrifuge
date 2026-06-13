@@ -2,6 +2,7 @@ package mailfeed
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"io"
 	"log/slog"
@@ -185,6 +186,27 @@ func TestRunOnceListErrorIsSwallowed(t *testing.T) {
 
 	if ing.callCount != 0 {
 		t.Fatalf("expected no ingests when list fails, got %d", ing.callCount)
+	}
+}
+
+func TestDecodeRawHandlesPaddedAndUnpadded(t *testing.T) {
+	// Bytes whose URL-safe base64 needs padding, exercising both encodings.
+	want := []byte("From: a@b.c\r\nSubject: hi\r\n\r\nbody?>")
+	for _, tc := range []struct {
+		name, enc string
+	}{
+		{"padded", base64.URLEncoding.EncodeToString(want)},
+		{"unpadded", base64.RawURLEncoding.EncodeToString(want)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := decodeRaw(tc.enc)
+			if err != nil {
+				t.Fatalf("decodeRaw(%s): %v", tc.name, err)
+			}
+			if string(got) != string(want) {
+				t.Fatalf("decodeRaw(%s) = %q, want %q", tc.name, got, want)
+			}
+		})
 	}
 }
 

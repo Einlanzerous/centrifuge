@@ -52,7 +52,6 @@ func ItemsSchema() map[string]any {
 			"properties": map[string]any{
 				"title":           map[string]any{"type": "string"},
 				"snippet":         map[string]any{"type": "string"},
-				"url":             map[string]any{"type": "string"},
 				"kind":            map[string]any{"type": "string", "enum": []string{KindStory, KindBlurb, KindAd, KindPromo}},
 				"section":         map[string]any{"type": "string"},
 				"summary":         map[string]any{"type": "string"},
@@ -239,7 +238,17 @@ func scanArrayElements(s string) (elems []json.RawMessage, closed bool) {
 		case '{':
 			obj, end, ok := scanObject(s, i)
 			if !ok {
-				return elems, false // object cut off mid-output
+				// Object cut off mid-output. The recurring failure (CTFG-46) is a
+				// runaway repetition inside a trailing string value — gemma at
+				// temperature 0 emits an endless "/" run in "url" that never closes
+				// the string, so the whole object (and array) never terminates.
+				// Every key/value pair that completed before it is still good, so
+				// recover those rather than losing the item — critical when the
+				// truncated object is the FIRST/only one (recovered would be 0).
+				if partial := salvagePartialObject(s, i); partial != "" {
+					elems = append(elems, json.RawMessage(partial))
+				}
+				return elems, false
 			}
 			elems = append(elems, json.RawMessage(obj))
 			i = end
@@ -282,6 +291,57 @@ func scanObject(s string, start int) (obj string, end int, ok bool) {
 		}
 	}
 	return "", len(s), false
+}
+
+// salvagePartialObject reconstructs a valid JSON object from the top-level
+// key/value pairs that completed before s[start]=='{' was truncated. It finds
+// the last comma at object depth 1 (the boundary after the last finished pair,
+// string- and escape-aware so commas inside values don't count) and closes the
+// object there, dropping the half-written trailing pair. Returns "" when not
+// even one pair completed (nothing to keep) or the result isn't valid JSON.
+//
+// This is what lets the recurring runaway-string truncation (an endless "/" run
+// in "url"; CTFG-46) still yield the item's real content — title, snippet,
+// summary, score all land before the doomed url field.
+func salvagePartialObject(s string, start int) string {
+	depth := 0
+	inStr := false
+	esc := false
+	lastComma := -1
+	for i := start; i < len(s); i++ {
+		c := s[i]
+		if inStr {
+			switch {
+			case esc:
+				esc = false
+			case c == '\\':
+				esc = true
+			case c == '"':
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+		case '{', '[':
+			depth++
+		case '}', ']':
+			depth--
+		case ',':
+			if depth == 1 {
+				lastComma = i
+			}
+		}
+	}
+	if lastComma < 0 {
+		return ""
+	}
+	candidate := s[start:lastComma] + "}"
+	if !json.Valid([]byte(candidate)) {
+		return ""
+	}
+	return candidate
 }
 
 // decodeFirst decodes the first JSON value in s into v, ignoring any trailing

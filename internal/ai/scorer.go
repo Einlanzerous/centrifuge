@@ -71,3 +71,26 @@ func (s *Scorer) Raw(ctx context.Context, in ScoreInput) (string, error) {
 
 // Model returns the model tag the scorer's client uses, for provenance.
 func (s *Scorer) Model() string { return s.client.Model() }
+
+// Deterministic reports whether the scorer samples greedily (temperature 0), so
+// a re-run of the same prompt reproduces the same output byte-for-byte. The
+// worker uses this to skip pointless retries of a truncated response: at temp 0
+// the retry yields the identical truncation, so it should salvage immediately
+// (CTFG-45). An unset temperature means the Ollama default (stochastic), so this
+// returns false and the normal retry budget applies.
+func (s *Scorer) Deterministic() bool {
+	t, ok := s.options["temperature"]
+	if !ok {
+		return false
+	}
+	switch v := t.(type) {
+	case float64:
+		return v == 0
+	case float32:
+		return v == 0
+	case int:
+		return v == 0
+	default:
+		return false
+	}
+}

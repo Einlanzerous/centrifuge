@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.5.4](https://github.com/Einlanzerous/centrifuge/compare/v1.5.3...v1.5.4) (2026-06-13)
+
+
+### Bug Fixes
+
+* **reader:** fuzzy segment anchoring so paraphrased snippets still slice (CTFG-55) ([91b05d5](https://github.com/Einlanzerous/centrifuge/commit/91b05d587615c36e00aa645719f89862955cb9a8))
+* **reader:** fuzzy segment anchoring so paraphrased snippets still slice (CTFG-55) ([0ce639a](https://github.com/Einlanzerous/centrifuge/commit/0ce639a1dfe636fe27a5e9e45fd30db99d749bbe))
+
 ## [1.5.3](https://github.com/Einlanzerous/centrifuge/compare/v1.5.2...v1.5.3) (2026-06-13)
 
 

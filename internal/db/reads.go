@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/jackc/pgx/v5"
 	"golang.org/x/net/html"
@@ -215,18 +216,22 @@ WHERE st.id = $1`
 	return &v, nil
 }
 
-// siblingSnippet pairs a story's position with its verbatim opening snippet,
-// used as a boundary anchor when slicing one segment out of the newsletter.
+// siblingSnippet pairs a story's position with its verbatim opening snippet and
+// title, used as boundary anchors when slicing one segment out of the
+// newsletter. The snippet marks where an item's body begins; the title marks
+// where the item visually begins (it physically precedes the snippet), so it
+// bounds the *previous* item's text more tightly.
 type siblingSnippet struct {
 	position int
 	snippet  string
+	title    string
 }
 
 // siblingSnippets returns every story in a newsletter (any kind) ordered by
 // position, so adjacent stories bound each other's text span.
 func (r *StoryRepo) siblingSnippets(ctx context.Context, newsletterID string) ([]siblingSnippet, error) {
 	rows, err := r.db.Query(ctx,
-		`SELECT position, COALESCE(snippet, '') FROM stories WHERE newsletter_id = $1 ORDER BY position`,
+		`SELECT position, COALESCE(snippet, ''), COALESCE(title, '') FROM stories WHERE newsletter_id = $1 ORDER BY position`,
 		newsletterID)
 	if err != nil {
 		return nil, err
@@ -235,7 +240,7 @@ func (r *StoryRepo) siblingSnippets(ctx context.Context, newsletterID string) ([
 	var out []siblingSnippet
 	for rows.Next() {
 		var s siblingSnippet
-		if err := rows.Scan(&s.position, &s.snippet); err != nil {
+		if err := rows.Scan(&s.position, &s.snippet, &s.title); err != nil {
 			return nil, err
 		}
 		out = append(out, s)
@@ -368,6 +373,7 @@ func extractSegmentText(text string, sibs []siblingSnippet, position int) string
 	start := loc[0]
 
 	end := len(text)
+	var nextTitle string
 	rest := text[start+1:]
 	for _, s := range sibs {
 		if s.position == position {
@@ -380,10 +386,84 @@ func extractSegmentText(text string, sibs []siblingSnippet, position int) string
 		if l := re.FindStringIndex(rest); l != nil {
 			if e := start + 1 + l[0]; e < end {
 				end = e
+				nextTitle = s.title
 			}
 		}
 	}
+
+	// The boundary above is the *next* item's body (its snippet), but a digest
+	// renders each item as [section label][title][byline][snippet], so that
+	// item's label/title/byline physically precede its snippet and would bleed
+	// into this story. Pull the end back to the next item's title and drop any
+	// preceding section label (CTFG-44).
+	end = trimNextLeadIn(text, start, end, nextTitle)
+
 	return strings.TrimSpace(text[start:end])
+}
+
+// trimNextLeadIn pulls end back so the next item's lead-in does not bleed into
+// this story. It looks for nextTitle within a bounded window just before end
+// (so a title-like phrase deep in this body cannot truncate it), cuts there,
+// then also drops an immediately-preceding ALL-CAPS section label. Returns end
+// unchanged when the title is too short to match safely or is not found.
+func trimNextLeadIn(text string, start, end int, nextTitle string) int {
+	title := strings.Join(strings.Fields(nextTitle), " ")
+	if len([]rune(title)) < 4 {
+		return end
+	}
+
+	const window = 400
+	from := end - window
+	if from < start {
+		from = start
+	}
+	region := text[from:end]
+	idx := strings.LastIndex(strings.ToLower(region), strings.ToLower(title))
+	if idx < 0 {
+		return end
+	}
+	cut := from + idx
+
+	return dropPrecedingLabel(text, start, cut)
+}
+
+// dropPrecedingLabel moves cut back to swallow a lone ALL-CAPS section label
+// (e.g. "CYBERSECURITY") sitting on the line immediately before cut. It leaves
+// the current story's own em-dash byline ("—BH") alone.
+func dropPrecedingLabel(text string, start, cut int) int {
+	seg := strings.TrimRight(text[start:cut], " \t\n")
+	nl := strings.LastIndex(seg, "\n")
+	lineStart := start
+	if nl >= 0 {
+		lineStart = start + nl + 1
+	}
+	line := strings.TrimSpace(text[lineStart : start+len(seg)])
+	if isSectionLabel(line) {
+		return lineStart
+	}
+	return cut
+}
+
+// isSectionLabel reports whether s is a short, all-uppercase category header
+// (digits, spaces, and punctuation allowed). Lines beginning with a dash are
+// bylines ("—BH"), not labels, and are excluded.
+func isSectionLabel(s string) bool {
+	if s == "" || len([]rune(s)) > 32 {
+		return false
+	}
+	if strings.HasPrefix(s, "-") || strings.HasPrefix(s, "—") {
+		return false
+	}
+	hasLetter := false
+	for _, r := range s {
+		if unicode.IsLetter(r) {
+			hasLetter = true
+			if !unicode.IsUpper(r) {
+				return false
+			}
+		}
+	}
+	return hasLetter
 }
 
 // TopicCount is one row of the topic registry: a dynamic primary_topic and how

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -377,12 +378,75 @@ func asArray(v json.RawMessage) ([]json.RawMessage, error) {
 	return a, nil
 }
 
-// normalizeItem clamps, trims, and defaults one raw item into a ScoredItem. The
-// bool is false when the item carries no usable content (no title and no
-// snippet) and should be dropped.
+// fillerRun matches the greedy decoder's repetition padding: a run of the same
+// filler glyph spaced apart ("trains in_ _ _ _ _on Illinois") or a long unspaced
+// underscore run. Deliberately narrow — real prose never spaces a lone _/*/~ this
+// way, and 4+ unspaced underscores are padding, not content — so an ellipsis or a
+// lone em-dash is left untouched. CTFG-56.
+var fillerRun = regexp.MustCompile(`(?:[_*~]\s+){3,}[_*~]?|[_*~]{4,}`)
+
+// wordToken matches one word (letters/digits, with internal apostrophes or
+// hyphens) for the duplicate-word collapse.
+var wordToken = regexp.MustCompile(`[\p{L}\p{N}]+(?:['’\-][\p{L}\p{N}]+)*`)
+
+// horizWS collapses runs of horizontal whitespace (not newlines) to one space.
+var horizWS = regexp.MustCompile(`[ \t\f\v]{2,}`)
+
+// sanitizeModelText repairs the deterministic degradation the temperature-0 model
+// falls into (CTFG-56): repetition padding ("_ _ _ _") and an immediately
+// repeated word ("with with", "cathedral cathedral"). It does not fabricate or
+// reorder content — it only removes the model's own loop artifacts — so it is safe
+// to apply unconditionally to every free-text field. Glued words ("thepost") and
+// empty summaries are model-quality issues it cannot fix and are left as-is.
+func sanitizeModelText(s string) string {
+	if s == "" {
+		return s
+	}
+	s = fillerRun.ReplaceAllString(s, " ")
+	s = collapseRepeatedWords(s)
+	s = horizWS.ReplaceAllString(s, " ")
+	return strings.TrimSpace(s)
+}
+
+// collapseRepeatedWords drops an immediately repeated word ("and and" → "and"),
+// case-insensitively, when only whitespace separates the two occurrences. It
+// preserves surrounding text and the first occurrence's casing; a repeat split by
+// punctuation ("End. End") is intentional-looking and left intact. RE2 has no
+// backreferences, so the scan is manual.
+func collapseRepeatedWords(s string) string {
+	locs := wordToken.FindAllStringIndex(s, -1)
+	if len(locs) < 2 {
+		return s
+	}
+	var b strings.Builder
+	b.WriteString(s[:locs[0][0]])
+	keptWord, keptEnd := "", 0
+	for i, loc := range locs {
+		w := s[loc[0]:loc[1]]
+		if i == 0 {
+			b.WriteString(w)
+			keptWord, keptEnd = w, loc[1]
+			continue
+		}
+		gap := s[keptEnd:loc[0]]
+		if gap != "" && strings.TrimSpace(gap) == "" && strings.EqualFold(w, keptWord) {
+			keptEnd = loc[1] // swallow the duplicate and its whitespace gap
+			continue
+		}
+		b.WriteString(gap)
+		b.WriteString(w)
+		keptWord, keptEnd = w, loc[1]
+	}
+	b.WriteString(s[keptEnd:])
+	return b.String()
+}
+
+// normalizeItem clamps, trims, sanitizes, and defaults one raw item into a
+// ScoredItem. The bool is false when the item carries no usable content (no title
+// and no snippet) and should be dropped.
 func normalizeItem(ri rawItem) (ScoredItem, bool) {
-	title := strings.TrimSpace(ri.Title)
-	snippet := truncate(strings.TrimSpace(ri.Snippet), MaxSnippetChars)
+	title := sanitizeModelText(ri.Title)
+	snippet := truncate(sanitizeModelText(ri.Snippet), MaxSnippetChars)
 	if title == "" && snippet == "" {
 		return ScoredItem{}, false
 	}
@@ -411,7 +475,7 @@ func normalizeItem(ri rawItem) (ScoredItem, bool) {
 		URL:            url,
 		Kind:           kind,
 		Section:        strings.TrimSpace(ri.Section),
-		Summary:        truncate(strings.TrimSpace(ri.Summary), MaxSummaryChars),
+		Summary:        truncate(sanitizeModelText(ri.Summary), MaxSummaryChars),
 		RelevanceScore: score,
 		PrimaryTopic:   strings.TrimSpace(ri.PrimaryTopic),
 		Labels:         normalizeLabels(ri.Labels),

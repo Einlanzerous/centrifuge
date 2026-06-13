@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.5.1](https://github.com/Einlanzerous/centrifuge/compare/v1.5.0...v1.5.1) (2026-06-13)
+
+
+### Bug Fixes
+
+* **reader:** trim next item's lead-in from segment text (CTFG-44) ([74c98f0](https://github.com/Einlanzerous/centrifuge/commit/74c98f05a5aa10e71209d0f5a2da0cca910c154c))
+* **reader:** trim next item's lead-in from segment text (CTFG-44) ([8967d15](https://github.com/Einlanzerous/centrifuge/commit/8967d15bd8490538ed93186a9295e8ff266308a1))
+* **scoring:** pin sampling temperature to 0 so JSON output can't spiral (CTFG-43) ([f33cd4a](https://github.com/Einlanzerous/centrifuge/commit/f33cd4a278f7fdb40e95ee574e91d1f922fd0f93))
+* **scoring:** pin sampling temperature to 0 so JSON output can't spiral (CTFG-43) ([528e0d4](https://github.com/Einlanzerous/centrifuge/commit/528e0d4ef60b6c528e687594cffbae55a3271e58))
+
 ## [1.5.0](https://github.com/Einlanzerous/centrifuge/compare/v1.4.0...v1.5.0) (2026-06-11)
 
 

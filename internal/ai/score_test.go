@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -326,5 +327,59 @@ func TestBuildPromptEmptyTopics(t *testing.T) {
 	p := BuildPrompt(PromptInput{Body: "x"})
 	if !strings.Contains(p, "none specified") {
 		t.Errorf("empty topics not handled: %s", p)
+	}
+}
+
+func TestSanitizeModelText(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		// Repairs — repetition padding (the temperature-0 loop artifact).
+		{"spaced underscore padding", "fight for trains in_ _ _ _ _ _ _ _ _on Illinois", "fight for trains in on Illinois"},
+		{"unspaced underscore run", "see more ____ below", "see more below"},
+		{"asterisk padding", "a * * * * b", "a b"},
+		// Repairs — immediate word duplication.
+		{"doubled function word", "leaders and and their teams", "leaders and their teams"},
+		{"doubled with", "partnering with with Elevated", "partnering with Elevated"},
+		{"doubled content word", "a 144-year-old cathedral cathedral is set", "a 144-year-old cathedral is set"},
+		{"tripled word collapses fully", "the the the cat", "the cat"},
+		{"case-insensitive, keeps first casing", "The the cat", "The cat"},
+		// Left intact — legitimate text the heuristics must not touch.
+		{"ellipsis kept", "to be continued...", "to be continued..."},
+		{"em dash byline kept", "a real sentence.—BH", "a real sentence.—BH"},
+		{"hyphenated words kept", "Step-by-step, much-needed, 144-year-old", "Step-by-step, much-needed, 144-year-old"},
+		{"initials kept", "the John D. and Catherine T. fund", "the John D. and Catherine T. fund"},
+		{"non-adjacent repeat kept", "completion of which made it the completion", "completion of which made it the completion"},
+		{"punctuation-separated repeat kept", "The end. End of story", "The end. End of story"},
+		{"no change", "A perfectly ordinary sentence.", "A perfectly ordinary sentence."},
+		{"empty", "", ""},
+		// Combined.
+		{"padding and dup together", "trains in_ _ _ _on the the line", "trains in on the line"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := sanitizeModelText(c.in); got != c.want {
+				t.Errorf("sanitizeModelText(%q) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeItemSanitizes(t *testing.T) {
+	// The sanitizer runs inside normalizeItem, so a garbled snippet/summary is
+	// cleaned on the way into a ScoredItem.
+	got := normalizeItems([]json.RawMessage{json.RawMessage(
+		`{"title":"X","snippet":"trains in_ _ _ _ _on Illinois","summary":"leaders and and their teams","kind":"story","relevance_score":50,"primary_topic":"t"}`,
+	)})
+	if len(got) != 1 {
+		t.Fatalf("got %d items, want 1", len(got))
+	}
+	if got[0].Snippet != "trains in on Illinois" {
+		t.Errorf("snippet = %q", got[0].Snippet)
+	}
+	if got[0].Summary != "leaders and their teams" {
+		t.Errorf("summary = %q", got[0].Summary)
 	}
 }

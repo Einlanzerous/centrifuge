@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.5.5](https://github.com/Einlanzerous/centrifuge/compare/v1.5.4...v1.5.5) (2026-06-13)
+
+
+### Bug Fixes
+
+* **scoring:** sanitize repetition garble in model snippet/summary (CTFG-56) ([e4c6faa](https://github.com/Einlanzerous/centrifuge/commit/e4c6faa1e8477db52d06b8a1399a9c7b651c656c))
+* **scoring:** sanitize repetition garble in model snippet/summary (CTFG-56) ([f91fd16](https://github.com/Einlanzerous/centrifuge/commit/f91fd169fa88db370d0dfc9b053df9c07f1a3adb))
+
 ## [1.5.4](https://github.com/Einlanzerous/centrifuge/compare/v1.5.3...v1.5.4) (2026-06-13)
 
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.5.2](https://github.com/Einlanzerous/centrifuge/compare/v1.5.1...v1.5.2) (2026-06-13)
+
+
+### Bug Fixes
+
+* **scoring:** stop URL-padding truncation + skip deterministic retries (CTFG-45) ([5514ee2](https://github.com/Einlanzerous/centrifuge/commit/5514ee2b1c0b8b9e59795057cf804d7bb3bbef80))
+* **scoring:** stop URL-padding truncation + skip deterministic retries (CTFG-45) ([110cb41](https://github.com/Einlanzerous/centrifuge/commit/110cb41464cd2f3766c0adce9302b884cc67ea86))
+
 ## [1.5.1](https://github.com/Einlanzerous/centrifuge/compare/v1.5.0...v1.5.1) (2026-06-13)
 
 

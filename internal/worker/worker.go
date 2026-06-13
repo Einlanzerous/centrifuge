@@ -33,6 +33,10 @@ const (
 type Scorer interface {
 	Score(ctx context.Context, in ai.ScoreInput) ([]ai.ScoredItem, error)
 	Model() string
+	// Deterministic reports whether scoring samples greedily (temperature 0), so
+	// retrying a truncated response would reproduce the identical output. When
+	// true the worker salvages immediately instead of burning retries (CTFG-45).
+	Deterministic() bool
 }
 
 // Worker polls and scores pending newsletters.
@@ -202,18 +206,22 @@ func (w *Worker) handleScoreError(ctx context.Context, nl db.Newsletter, items [
 
 	var tr *ai.TruncatedError
 	if errors.As(scoreErr, &tr) {
-		if nl.ScoringAttempts < w.maxAttempts {
+		// A retry is only worthwhile when sampling is stochastic — at temperature
+		// 0 the model is deterministic, so a re-run reproduces the identical
+		// truncation and the retries are pure wasted GPU time (CTFG-45). Salvage
+		// immediately in that case.
+		if !w.scorer.Deterministic() && nl.ScoringAttempts < w.maxAttempts {
 			w.logger.Warn("scoring output truncated; requeuing for retry",
 				"newsletter", nl.ID, "attempt", nl.ScoringAttempts, "max", w.maxAttempts, "recovered", tr.Recovered)
 			return repo.Requeue(ctx, nl.ID)
 		}
 		if len(items) > 0 {
-			w.logger.Warn("scoring still truncated after retries; persisting salvaged items",
-				"newsletter", nl.ID, "attempts", nl.ScoringAttempts, "recovered", len(items))
+			w.logger.Warn("scoring truncated; persisting salvaged items",
+				"newsletter", nl.ID, "attempts", nl.ScoringAttempts, "recovered", len(items), "deterministic", w.scorer.Deterministic())
 			return w.persist(ctx, nl, items)
 		}
-		w.logger.Error("scoring truncated with nothing salvageable after retries; marking failed",
-			"newsletter", nl.ID, "attempts", nl.ScoringAttempts)
+		w.logger.Error("scoring truncated with nothing salvageable; marking failed",
+			"newsletter", nl.ID, "attempts", nl.ScoringAttempts, "deterministic", w.scorer.Deterministic())
 		return repo.MarkFailed(ctx, nl.ID, scoreErr.Error())
 	}
 

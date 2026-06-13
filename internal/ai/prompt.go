@@ -9,7 +9,7 @@ import (
 // prompt_version) so results are attributable to the exact instructions that
 // produced them. Bump it whenever the prompt text or the expected output
 // contract below changes — the eval harness (CTFG-23) diffs across versions.
-const PromptVersion = "2026-06-10.1"
+const PromptVersion = "2026-06-13.1"
 
 // PromptInput is everything the prompt builder needs about one newsletter. The
 // caller derives Body from the cleaned, truncated text (Phase 2) so the model's
@@ -74,7 +74,7 @@ Return ONLY a JSON array (no prose, no markdown fences). Each element:
 {
   "title": "short item title",
   "snippet": "the lead sentence of the item's actual body (NOT the email's preview/teaser line)",
-  "url": "the item's primary link if present, else omit or empty",
+  "url": "the item's primary link, copied verbatim; if it is a long tracking/redirect link, or you are not certain of the exact URL, use \"\" (empty). NEVER pad, guess, or repeat characters to complete a URL.",
   "kind": "story|blurb|ad|promo",
   "section": "the publication's section heading for this item if any, else omit",
   "summary": "2-3 sentence neutral summary (stories only; else empty)",

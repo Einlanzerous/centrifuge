@@ -15,9 +15,10 @@ import (
 
 // stubScorer is a deterministic stand-in for *ai.Scorer.
 type stubScorer struct {
-	items []ai.ScoredItem
-	err   error
-	calls int
+	items         []ai.ScoredItem
+	err           error
+	calls         int
+	deterministic bool
 }
 
 func (s *stubScorer) Score(_ context.Context, _ ai.ScoreInput) ([]ai.ScoredItem, error) {
@@ -26,6 +27,8 @@ func (s *stubScorer) Score(_ context.Context, _ ai.ScoreInput) ([]ai.ScoredItem,
 }
 
 func (s *stubScorer) Model() string { return "stub-model" }
+
+func (s *stubScorer) Deterministic() bool { return s.deterministic }
 
 func quietWorker(pool *pgxpool.Pool, scorer Scorer) *Worker {
 	return New(pool, scorer, WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
@@ -251,6 +254,65 @@ func TestProcessOneEmptyItemsCompletesWithNoStories(t *testing.T) {
 	stories, _ := db.NewStoryRepo(pool).ListByNewsletter(ctx, nl.ID)
 	if len(stories) != 0 {
 		t.Errorf("got %d stories, want 0", len(stories))
+	}
+}
+
+// CTFG-45: at temperature 0 a retry reproduces the identical truncation, so the
+// worker must salvage immediately rather than burn the retry budget — even
+// though ScoringAttempts (0) is still under maxAttempts.
+func TestProcessOneTruncatedDeterministicSalvagesImmediately(t *testing.T) {
+	pool := setupDB(t)
+	ctx := context.Background()
+	nl := seedPending(t, pool, "x", "body")
+
+	scorer := &stubScorer{
+		deterministic: true,
+		items:         []ai.ScoredItem{{Title: "kept", Kind: ai.KindStory, RelevanceScore: 70, URL: "https://e.com/a"}},
+		err:           &ai.TruncatedError{Recovered: 1},
+	}
+	if err := quietWorker(pool, scorer).processOne(ctx, nl); err != nil {
+		t.Fatalf("processOne: %v", err)
+	}
+	if got := statusOf(t, pool, nl.ID); got != db.StatusScored {
+		t.Errorf("status = %q, want scored (salvaged immediately, no requeue)", got)
+	}
+	stories, _ := db.NewStoryRepo(pool).ListByNewsletter(ctx, nl.ID)
+	if len(stories) != 1 {
+		t.Errorf("got %d stories, want 1 salvaged", len(stories))
+	}
+}
+
+// CTFG-45: deterministic + truncated + nothing salvageable must fail at once,
+// not retry an outcome that can't change.
+func TestProcessOneTruncatedDeterministicNoSalvageFails(t *testing.T) {
+	pool := setupDB(t)
+	nl := seedPending(t, pool, "x", "body")
+
+	scorer := &stubScorer{deterministic: true, items: nil, err: &ai.TruncatedError{Recovered: 0}}
+	if err := quietWorker(pool, scorer).processOne(context.Background(), nl); err != nil {
+		t.Fatalf("processOne: %v", err)
+	}
+	if got := statusOf(t, pool, nl.ID); got != db.StatusFailed {
+		t.Errorf("status = %q, want failed (no salvage, no pointless retry)", got)
+	}
+}
+
+// Stochastic sampling preserves the CTFG-33 behavior: a truncated response is
+// requeued within the attempt budget because a re-run might complete.
+func TestProcessOneTruncatedStochasticRequeues(t *testing.T) {
+	pool := setupDB(t)
+	nl := seedPending(t, pool, "x", "body") // ScoringAttempts 0 < maxAttempts
+
+	scorer := &stubScorer{
+		deterministic: false,
+		items:         []ai.ScoredItem{{Title: "t", Kind: ai.KindStory, RelevanceScore: 50}},
+		err:           &ai.TruncatedError{Recovered: 1},
+	}
+	if err := quietWorker(pool, scorer).processOne(context.Background(), nl); err != nil {
+		t.Fatalf("processOne: %v", err)
+	}
+	if got := statusOf(t, pool, nl.ID); got != db.StatusPending {
+		t.Errorf("status = %q, want pending_scoring (stochastic retry within budget)", got)
 	}
 }
 

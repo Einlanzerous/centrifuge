@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.5.3](https://github.com/Einlanzerous/centrifuge/compare/v1.5.2...v1.5.3) (2026-06-13)
+
+
+### Bug Fixes
+
+* **scoring:** drop url field to stop temp-0 repetition spiral (CTFG-46) ([08bba5d](https://github.com/Einlanzerous/centrifuge/commit/08bba5d5288990cb4303c1ad03148a7b91de7591))
+* **scoring:** drop url field to stop temp-0 repetition spiral (CTFG-46) ([fdea80e](https://github.com/Einlanzerous/centrifuge/commit/fdea80e2d18e5504d042dea13c74427a837fe7d7))
+
 ## [1.5.2](https://github.com/Einlanzerous/centrifuge/compare/v1.5.1...v1.5.2) (2026-06-13)
 
 

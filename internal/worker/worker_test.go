@@ -176,15 +176,16 @@ func TestProcessOneReScoreIsIdempotentAndCarriesEngagement(t *testing.T) {
 		t.Fatalf("after re-score: %d stories, want 2 (no duplicates)", len(second))
 	}
 
-	var keep *db.Story
+	keepIdx := -1
 	for i := range second {
 		if second[i].URL != nil && *second[i].URL == keepURL {
-			keep = &second[i]
+			keepIdx = i
 		}
 	}
-	if keep == nil {
+	if keepIdx < 0 {
 		t.Fatal("kept story missing after re-score")
 	}
+	keep := second[keepIdx]
 	if keep.ID == keepID {
 		t.Error("expected a fresh story row (new id) after re-score, got the old id")
 	}

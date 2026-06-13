@@ -201,6 +201,35 @@ func TestParseItemsTruncatedBeforeFirstItem(t *testing.T) {
 	}
 }
 
+func TestParseItemsSalvagesPartialFirstObject(t *testing.T) {
+	// The recurring gemma temp-0 failure (CTFG-46): a runaway "/" run inside the
+	// trailing "url" string of the FIRST object never closes it, so the digest
+	// truncates with zero *complete* objects. The fields that finished before the
+	// doomed url — title, snippet, summary, score — are still good and must be
+	// recovered; otherwise recovered=0 loses the entire newsletter (and the worker
+	// marks it failed).
+	raw := `[{"title":"Ride with Pride","kind":"story","relevance_score":95,` +
+		`"primary_topic":"transit","summary":"A pride train.","snippet":"We unveiled it.",` +
+		`"url":"//////////////////////////////////////////`
+	items, err := ParseItems(raw)
+	var te *TruncatedError
+	if !errors.As(err, &te) {
+		t.Fatalf("err = %v, want *TruncatedError", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("salvaged items = %+v, want 1 partial item", items)
+	}
+	if items[0].Title != "Ride with Pride" || items[0].Summary != "A pride train." || items[0].RelevanceScore != 95 {
+		t.Errorf("recovered item lost completed fields: %+v", items[0])
+	}
+	if items[0].URL != "" {
+		t.Errorf("URL = %q, want empty (incomplete trailing field dropped)", items[0].URL)
+	}
+	if te.Recovered != 1 {
+		t.Errorf("Recovered = %d, want 1", te.Recovered)
+	}
+}
+
 func TestScanArrayElements(t *testing.T) {
 	// Braces inside a string value and a nested object must not confuse the depth
 	// count; a properly closed array reports closed=true.
@@ -213,13 +242,28 @@ func TestScanArrayElements(t *testing.T) {
 		t.Fatalf("got %d elems, want 2", len(elems))
 	}
 
-	// Truncated mid-second-object: one complete element, closed=false.
+	// Truncated mid-second-object after a complete pair: the finished first
+	// element plus a partial salvage of the second (its completed "title":"b"
+	// pair), closed=false. The dangling "x": is dropped.
 	elems, ok = scanArrayElements(`[{"title":"a"},{"title":"b","x":`)
 	if ok {
 		t.Error("truncated array reported closed")
 	}
-	if len(elems) != 1 {
-		t.Errorf("got %d elems, want 1 complete before truncation", len(elems))
+	if len(elems) != 2 {
+		t.Fatalf("got %d elems, want complete first + partial second", len(elems))
+	}
+	if string(elems[1]) != `{"title":"b"}` {
+		t.Errorf("partial salvage = %s, want {\"title\":\"b\"}", elems[1])
+	}
+
+	// Truncated inside the very first value, before any pair completes: nothing
+	// to salvage from that object.
+	elems, ok = scanArrayElements(`[{"title":"a } brace`)
+	if ok {
+		t.Error("truncated array reported closed")
+	}
+	if len(elems) != 0 {
+		t.Errorf("got %d elems, want 0 (no complete pair)", len(elems))
 	}
 }
 

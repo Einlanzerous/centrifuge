@@ -28,11 +28,13 @@ const (
 	// (~30 items) while keeping the worst case (~280s at 22 tok/s) well under
 	// OLLAMA_TIMEOUT_SECONDS — keep that ordering when tuning either value.
 	DefaultOllamaNumPredict = 6144
-	// DefaultOllamaTemperature pins sampling to greedy decoding. At the model's
-	// own default (~0.8) gemma4:31b occasionally enters a repetition spiral
-	// inside a long string value and never closes the JSON element, so the whole
-	// digest truncates with nothing salvageable (CTFG-43). 0 also matches the
-	// score-fixtures eval gate, so prod output is reproducible there.
+	// DefaultOllamaTemperature pins sampling to greedy decoding for reproducible
+	// output (it matches the score-fixtures eval gate). Temperature is NOT a lever
+	// against the repetition spiral: at ~0.8 gemma4:31b spirals occasionally, at 0
+	// it spirals *deterministically* on a triggering input, and a small temp (0.2)
+	// is non-reproducible and bleeds "/" fragments into field values. The spiral is
+	// addressed by removing its surface instead — the model is no longer asked to
+	// emit a "url" field, the one place it ran away (CTFG-46).
 	DefaultOllamaTemperature = 0.0
 )
 

@@ -73,6 +73,89 @@ func TestExtractSegmentText_MissReturnsEmpty(t *testing.T) {
 	}
 }
 
+// The model often renders the snippet with an extra, dropped, or mangled word in
+// the opening (it paraphrases instead of copying verbatim). The fuzzy anchor must
+// still locate the story; an exact match would return "" and the Reader would
+// show a bare summary. Each case is drawn from a real production miss.
+func TestExtractSegmentText_FuzzyOpening(t *testing.T) {
+	cases := []struct {
+		name        string
+		body        string // story 1's true text in the newsletter
+		snippet     string // the model's (perturbed) rendering of its opening
+		nextSnippet string
+		nextBody    string
+	}{
+		{
+			name:        "inserted word (is THE quiet)",
+			body:        "It’s 8:42 a.m. The security operations center is quiet, save for the hum of server fans.",
+			snippet:     "It’s 8:42 a.m. The security operations center is the quiet, save for the hum of server fans",
+			nextSnippet: "Second story opens with delta epsilon zeta and more words",
+			nextBody:    "Second story opens with delta epsilon zeta and more words here.",
+		},
+		{
+			name:        "doubled word (with with)",
+			body:        "We’re partnering with Elevated Chicago and the John D foundation to expand culture near transit.",
+			snippet:     "We’re partnering with with Elevated Chicago and the John D foundation to expand",
+			nextSnippet: "Next item alpha bravo charlie delta echo here",
+			nextBody:    "Next item alpha bravo charlie delta echo here.",
+		},
+		{
+			name:        "garbled tail (expected ARE SAME AS ABOVE)",
+			body:        "OpenAI confidentially filed for an IPO that’s expected to launch later this year, joining peers.",
+			snippet:     "OpenAI confidentially filed for an IPO that’s expected are same as above",
+			nextSnippet: "Jeep recalled thousands of vehicles over a software glitch",
+			nextBody:    "Jeep recalled thousands of vehicles over a software glitch this week.",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			text := c.body + "\n\n" + c.nextBody
+			sibs := []siblingSnippet{
+				{position: 1, snippet: c.snippet},
+				{position: 2, snippet: c.nextSnippet},
+			}
+			if got := extractSegmentText(text, sibs, 1); got != c.body {
+				t.Fatalf("extractSegmentText() = %q, want %q", got, c.body)
+			}
+		})
+	}
+}
+
+// Newsletters repeat each story's opening line in a contents block near the top,
+// so a snippet aligns both there (a sliver, bounded by the next contents line)
+// and at the real body far below. The slice must be the body, not the sliver.
+func TestExtractSegmentText_PrefersBodyOverContentsBlock(t *testing.T) {
+	toc := "Alpha story opens here about apples and oranges.\n\n" +
+		"Bravo story opens here about bananas and cherries.\n\n"
+	bodyA := "Alpha story opens here about apples and oranges, with a long detailed paragraph that runs on."
+	bodyB := "Bravo story opens here about bananas and cherries, also with its own detailed body paragraph."
+	text := toc + bodyA + "\n\n" + bodyB
+	sibs := []siblingSnippet{
+		{position: 1, snippet: "Alpha story opens here about apples and oranges"},
+		{position: 2, snippet: "Bravo story opens here about bananas and cherries"},
+	}
+	if got := extractSegmentText(text, sibs, 1); got != bodyA {
+		t.Fatalf("extractSegmentText() = %q, want %q", got, bodyA)
+	}
+}
+
+// Two stories can share a first word (or a near-identical opening, a model
+// duplication artifact). The next sibling must bound this story at its own real
+// location, not a few words in just because the words rhyme — otherwise the slice
+// collapses to a sliver (the production "OpenAI" → 6-char bug).
+func TestExtractSegmentText_SharedOpeningDoesNotTruncate(t *testing.T) {
+	body1 := "OpenAI filed for an IPO expected to launch later this year joining peers in the market."
+	body2 := "OpenAI also released a new model family for developers earlier in the same week."
+	text := body1 + "\n\n" + body2
+	sibs := []siblingSnippet{
+		{position: 1, snippet: "OpenAI filed for an IPO expected to launch later this year joining peers"},
+		{position: 2, snippet: "OpenAI also released a new model family for developers earlier"},
+	}
+	if got := extractSegmentText(text, sibs, 1); got != body1 {
+		t.Fatalf("extractSegmentText() = %q, want %q", got, body1)
+	}
+}
+
 func TestExtractSegmentText_TrimsNextLeadIn(t *testing.T) {
 	// Reproduces the IT Brew bleed (CTFG-44): the next item's section label,
 	// title, and byline physically precede its snippet, so without trimming they

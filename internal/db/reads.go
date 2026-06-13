@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -325,69 +324,170 @@ func normalizeBlockText(s string) string {
 	return strings.TrimSpace(out)
 }
 
-// anchorRegexp builds a whitespace-tolerant matcher for a snippet's opening
-// words, used to locate that story's start inside the structured newsletter
-// text. Returns nil for snippets too short to anchor reliably.
-func anchorRegexp(snippet string) *regexp.Regexp {
-	words := strings.Fields(strings.TrimRight(snippet, ".… "))
-	if len(words) < 3 {
-		return nil
-	}
-	if len(words) > 10 {
-		words = words[:10]
-	}
-	for i, w := range words {
-		words[i] = regexp.QuoteMeta(w)
-	}
-	re, err := regexp.Compile(strings.Join(words, `\s+`))
-	if err != nil {
-		return nil
-	}
-	return re
+// wordTok is one normalized word of the newsletter text tagged with its byte
+// offset, so a fuzzy match over tokens can map back to a slice boundary.
+type wordTok struct {
+	w   string // lowercased, alphanumeric-only
+	off int    // byte offset of the word's first rune in the source text
 }
 
-// extractSegmentText slices the verbatim text (paragraph breaks intact) of the
-// story at position out of the structured newsletter text. Each story's snippet
-// is the literal start of its section, so the span runs from this story's anchor
-// to whichever other story's anchor comes next *physically* — sponsors/promos
-// are interleaved between stories and numbered out of physical order, so the
-// boundary can't rely on scorer position. Returns "" if the start can't be found.
+// tokenize splits text into lowercased alphanumeric word tokens, each carrying
+// its byte offset. Punctuation, casing, and whitespace are dropped, so a snippet
+// that only perturbs those still aligns to the body.
+func tokenize(text string) []wordTok {
+	var out []wordTok
+	start := -1
+	for i, r := range text {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			if start < 0 {
+				start = i
+			}
+			continue
+		}
+		if start >= 0 {
+			out = append(out, wordTok{w: strings.ToLower(text[start:i]), off: start})
+			start = -1
+		}
+	}
+	if start >= 0 {
+		out = append(out, wordTok{w: strings.ToLower(text[start:]), off: start})
+	}
+	return out
+}
+
+const (
+	// anchorLen is how many of a snippet's opening tokens form the anchor, and
+	// anchorSlack how many extra body tokens the match window spans to absorb the
+	// model's inserted words. The scoring model paraphrases the verbatim snippet —
+	// inserting, dropping, or mangling a word or two in the opening — so an exact
+	// match is too brittle; we look instead for the densest run of these tokens.
+	anchorLen   = 14
+	anchorSlack = 6
+)
+
+// anchorTokens returns the normalized opening tokens of a snippet, or nil when
+// it is too short to anchor reliably (fewer than 3 words risks false matches).
+func anchorTokens(snippet string) []string {
+	toks := tokenize(snippet)
+	if len(toks) < 3 {
+		return nil
+	}
+	if len(toks) > anchorLen {
+		toks = toks[:anchorLen]
+	}
+	out := make([]string, len(toks))
+	for i, t := range toks {
+		out[i] = t.w
+	}
+	return out
+}
+
+// lcsLen is the length of the longest common subsequence of two token lists —
+// order-preserving overlap, so inserted/dropped words cost one match each rather
+// than failing the whole anchor.
+func lcsLen(a, b []string) int {
+	prev := make([]int, len(b)+1)
+	cur := make([]int, len(b)+1)
+	for i := 1; i <= len(a); i++ {
+		for j := 1; j <= len(b); j++ {
+			if a[i-1] == b[j-1] {
+				cur[j] = prev[j-1] + 1
+			} else if prev[j] >= cur[j-1] {
+				cur[j] = prev[j]
+			} else {
+				cur[j] = cur[j-1]
+			}
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(b)]
+}
+
+// anchorLocate is the earliest confident alignment of a snippet's opening in the
+// body tokens (byte offset), or -1 on no match — the single-result form used for
+// boundary detection. minOff bounds the search to tokens at/after a byte offset,
+// keeping a sibling from bounding text that physically precedes this story.
+func anchorLocate(body []wordTok, anchor []string, minOff int) int {
+	if m := anchorMatches(body, anchor, minOff); len(m) > 0 {
+		return m[0]
+	}
+	return -1
+}
+
+// anchorMatches returns the byte offsets of every confident alignment of anchor
+// in body (at/after minOff), in document order. It anchors on the snippet's first
+// opening word and keeps each occurrence whose window shares at least 60% of the
+// anchor tokens in order — fuzzy enough to absorb the model's mid-anchor
+// paraphrase, but pinned to the verbatim first word so a sibling with a similar
+// opening can't bound this story a few words in. Newsletters often repeat a
+// story's opening in a table-of-contents block above its body, so a snippet can
+// align in more than one place; the caller disambiguates.
+func anchorMatches(body []wordTok, anchor []string, minOff int) []int {
+	if len(anchor) == 0 {
+		return nil
+	}
+	need := (len(anchor)*6 + 9) / 10 // ceil(0.6*len)
+	if need < 3 {
+		need = 3
+	}
+	var offs []int
+	for i := range body {
+		if body[i].off < minOff || body[i].w != anchor[0] {
+			continue
+		}
+		win := body[i:min(i+len(anchor)+anchorSlack, len(body))]
+		wt := make([]string, len(win))
+		for k, t := range win {
+			wt[k] = t.w
+		}
+		if lcsLen(anchor, wt) >= need {
+			offs = append(offs, body[i].off)
+		}
+	}
+	return offs
+}
+
+// extractSegmentText slices the text (paragraph breaks intact) of the story at
+// position out of the structured newsletter text. Each story's snippet is the
+// model's rendering of its opening, so the span runs from this story's anchor to
+// whichever other story's anchor comes next *physically* — sponsors/promos are
+// interleaved between stories and numbered out of physical order, so the boundary
+// can't rely on scorer position. Returns "" if the start can't be found.
 func extractSegmentText(text string, sibs []siblingSnippet, position int) string {
 	if strings.TrimSpace(text) == "" {
 		return ""
 	}
-	var cur *regexp.Regexp
+	body := tokenize(text)
+
+	var cur []string
 	for _, s := range sibs {
 		if s.position == position {
-			cur = anchorRegexp(s.snippet)
+			cur = anchorTokens(s.snippet)
 			break
 		}
 	}
-	if cur == nil {
+	starts := anchorMatches(body, cur, 0)
+	if len(starts) == 0 {
 		return ""
 	}
-	loc := cur.FindStringIndex(text)
-	if loc == nil {
-		return ""
-	}
-	start := loc[0]
 
-	end := len(text)
-	var nextTitle string
-	rest := text[start+1:]
-	for _, s := range sibs {
-		if s.position == position {
-			continue
-		}
-		re := anchorRegexp(s.snippet)
-		if re == nil {
-			continue
-		}
-		if l := re.FindStringIndex(rest); l != nil {
-			if e := start + 1 + l[0]; e < end {
-				end = e
-				nextTitle = s.title
+	// A snippet can align both in a table-of-contents block (where the next item's
+	// TOC line bounds it a few words later) and at the real body (bounded by the
+	// next story far below). Pick the alignment that yields the longest span — the
+	// sliver TOC matches lose to the actual article body.
+	start, end, nextTitle := -1, 0, ""
+	for _, st := range starts {
+		e, nt := len(text), ""
+		for _, s := range sibs {
+			if s.position == position {
+				continue
 			}
+			if b := anchorLocate(body, anchorTokens(s.snippet), st+1); b >= 0 && b < e {
+				e, nt = b, s.title
+			}
+		}
+		if start < 0 || e-st > end-start {
+			start, end, nextTitle = st, e, nt
 		}
 	}
 

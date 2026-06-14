@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.5.6](https://github.com/Einlanzerous/centrifuge/compare/v1.5.5...v1.5.6) (2026-06-14)
+
+
+### Bug Fixes
+
+* **reader:** strip zero-width spacer runes from segment text (CTFG-58) ([682e2ca](https://github.com/Einlanzerous/centrifuge/commit/682e2caf748d4fe3aa46e84ab4239a0056e274d7))
+* **reader:** strip zero-width spacer runes from segment text (CTFG-58) ([8944761](https://github.com/Einlanzerous/centrifuge/commit/89447614d882602bb7e8d93ad2e0296a3600c6d4))
+* **scoring:** blank schema-vocabulary leaked into primary_topic (CTFG-57) ([7f3d8b2](https://github.com/Einlanzerous/centrifuge/commit/7f3d8b25025ca21459bfd24e5e3139228b07cc5c))
+* **scoring:** blank schema-vocabulary leaked into primary_topic (CTFG-57) ([5015adf](https://github.com/Einlanzerous/centrifuge/commit/5015adff669b785c0cdcf493070d2e8792cf5cd8))
+
 ## [1.5.5](https://github.com/Einlanzerous/centrifuge/compare/v1.5.4...v1.5.5) (2026-06-13)
 
 

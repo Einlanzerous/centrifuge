@@ -383,3 +383,32 @@ func TestNormalizeItemSanitizes(t *testing.T) {
 		t.Errorf("summary = %q", got[0].Summary)
 	}
 }
+
+func TestCleanTopicRejectsSchemaVocabulary(t *testing.T) {
+	// The model sometimes echoes a JSON field name or a kind enum value into
+	// primary_topic; those are blanked, real labels pass through (CTFG-57).
+	blanked := []string{"primary_topic", "Primary_Topic", "ad", "STORY", "summary", "labels", " kind "}
+	for _, in := range blanked {
+		if got := cleanTopic(in); got != "" {
+			t.Errorf("cleanTopic(%q) = %q, want blank", in, got)
+		}
+	}
+	kept := []string{"AI engineering", "transit/trains", "cybersecurity", "advertising"}
+	for _, in := range kept {
+		if got := cleanTopic(in); got != in {
+			t.Errorf("cleanTopic(%q) = %q, want unchanged", in, got)
+		}
+	}
+}
+
+func TestNormalizeItemBlanksLeakedTopic(t *testing.T) {
+	got := normalizeItems([]json.RawMessage{json.RawMessage(
+		`{"title":"Black Kite","kind":"story","relevance_score":0,"primary_topic":"primary_topic","summary":"s"}`,
+	)})
+	if len(got) != 1 {
+		t.Fatalf("got %d items, want 1", len(got))
+	}
+	if got[0].PrimaryTopic != "" {
+		t.Errorf("PrimaryTopic = %q, want blank", got[0].PrimaryTopic)
+	}
+}

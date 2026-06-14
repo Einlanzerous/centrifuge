@@ -310,9 +310,38 @@ func htmlToText(rawHTML string) string {
 	}
 }
 
-// normalizeBlockText collapses intra-line whitespace and limits blank-line runs
-// so the kept paragraph structure reads cleanly.
+// isInvisible reports whether r is a zero-width / formatting code point that
+// newsletters embed (often in long runs, as inbox spacer hacks) but that carries
+// no reading content: the zero-width space/joiner/non-joiner, the word joiner,
+// the BOM/ZWNBSP, the bidi marks, and the soft hyphen. Stripping them keeps the
+// Reader's extracted segment text clean (CTFG-58). NBSP is deliberately excluded —
+// it is whitespace, so strings.Fields already folds it into a single space.
+func isInvisible(r rune) bool {
+	switch r {
+	case 0x200B, // zero-width space
+		0x200C, // zero-width non-joiner
+		0x200D, // zero-width joiner
+		0x2060, // word joiner
+		0xFEFF, // zero-width no-break space / BOM
+		0x200E, // left-to-right mark
+		0x200F, // right-to-left mark
+		0x00AD, // soft hyphen
+		0x180E: // Mongolian vowel separator
+		return true
+	}
+	return false
+}
+
+// normalizeBlockText strips invisible spacer runes, collapses intra-line
+// whitespace, and limits blank-line runs so the kept paragraph structure reads
+// cleanly.
 func normalizeBlockText(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if isInvisible(r) {
+			return -1
+		}
+		return r
+	}, s)
 	lines := strings.Split(s, "\n")
 	for i, ln := range lines {
 		lines[i] = strings.Join(strings.Fields(ln), " ")

@@ -231,3 +231,14 @@ func TestIsSectionLabel(t *testing.T) {
 		}
 	}
 }
+
+func TestHTMLToTextStripsInvisible(t *testing.T) {
+	// Newsletters pad text with zero-width spacer runes (often in long runs) and
+	// NBSP. The Reader's extracted text must drop the zero-width ones and fold
+	// NBSP into a single space (CTFG-58).
+	in := "<p>OpenAI announced it\u200c\u200c\u200c\u00a0\u00a0would acquire\ufeff Ona\u00ad.</p>"
+	want := "OpenAI announced it would acquire Ona."
+	if got := htmlToText(in); got != want {
+		t.Fatalf("htmlToText() = %q, want %q", got, want)
+	}
+}

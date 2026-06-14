@@ -477,9 +477,32 @@ func normalizeItem(ri rawItem) (ScoredItem, bool) {
 		Section:        strings.TrimSpace(ri.Section),
 		Summary:        truncate(sanitizeModelText(ri.Summary), MaxSummaryChars),
 		RelevanceScore: score,
-		PrimaryTopic:   strings.TrimSpace(ri.PrimaryTopic),
+		PrimaryTopic:   cleanTopic(ri.PrimaryTopic),
 		Labels:         normalizeLabels(ri.Labels),
 	}, true
+}
+
+// reservedTopics are the scorer's own schema vocabulary — the JSON field names
+// and the kind enum values — that the model occasionally echoes into
+// primary_topic instead of a real label (observed: "primary_topic", "ad"). They
+// are never valid topics, so cleanTopic blanks them rather than let them surface
+// as a junk chip in the topic registry (CTFG-57).
+var reservedTopics = map[string]bool{
+	"title": true, "snippet": true, "url": true, "kind": true, "section": true,
+	"summary": true, "relevance_score": true, "primary_topic": true, "labels": true,
+	KindStory: true, KindBlurb: true, KindAd: true, KindPromo: true,
+}
+
+// cleanTopic trims a primary_topic and blanks it when the model returned a
+// reserved schema token instead of a real label. An empty primary_topic is valid
+// (the topic registry filters it out), so this drops the junk without failing the
+// item.
+func cleanTopic(s string) string {
+	s = strings.TrimSpace(s)
+	if reservedTopics[strings.ToLower(s)] {
+		return ""
+	}
+	return s
 }
 
 // normalizeLabels trims, de-dupes (case-insensitively), drops empties, and caps

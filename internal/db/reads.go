@@ -22,9 +22,10 @@ type StoryView struct {
 	ReceivedAt time.Time
 	// Body is the parent newsletter's raw HTML (detail endpoint only).
 	Body *string
-	// Segmented is true when the parent newsletter produced more than one story
-	// (a digest). The UI renders an essay's body inline but offers a digest's
-	// full newsletter behind a "view full" toggle.
+	// Segmented is true when the parent newsletter produced more than one item of
+	// any kind (a digest). The UI renders a true single essay's body inline but
+	// slices each digest item's own segment and offers the full newsletter behind
+	// a "view full" toggle.
 	Segmented bool
 	// SegmentText is this story's verbatim article text, sliced out of the parent
 	// newsletter's cleaned text (digest items only; nil when extraction misses).
@@ -176,12 +177,20 @@ LIMIT $%d OFFSET $%d`, storyViewCols, storyViewFrom, where.String(), limitIdx, o
 // GetEnriched returns one story with its source name, received timestamp, and
 // the raw HTML body for the Reader modal. Returns pgx.ErrNoRows if unknown.
 func (r *StoryRepo) GetEnriched(ctx context.Context, storyID string) (*StoryView, error) {
-	// Return the parent newsletter's raw HTML plus a "segmented" flag (more than
-	// one story => a digest). The UI renders an essay's body inline, but for a
-	// digest the same raw_html is the whole email, so it is shown only behind a
-	// "view full newsletter" toggle. Proper per-segment HTML is a follow-up.
+	// Return the parent newsletter's raw HTML plus a "segmented" flag: true when
+	// the parent produced more than one item of ANY kind (a digest). The UI
+	// renders a true single essay's body inline, but for a digest the same
+	// raw_html is the whole email, so it is shown only behind a "view full
+	// newsletter" toggle and each item gets its own sliced segment instead.
+	//
+	// The count spans all kinds, not just kind='story' (CTFG-36, defect A):
+	// segmentation sometimes demotes a digest's genuine sibling stories to
+	// blurb/ad, leaving a lone surviving story. Keying "segmented" off story
+	// count alone made such a digest look like an essay, so the Reader dumped
+	// the entire newsletter for that one story. Any sibling at all means it is a
+	// digest and must be sliced, never dumped.
 	const q = `SELECT ` + storyViewCols + `, n.raw_html,
-  (SELECT count(*) FROM stories sc WHERE sc.newsletter_id = n.id AND sc.kind = 'story') > 1
+  (SELECT count(*) FROM stories sc WHERE sc.newsletter_id = n.id) > 1
 ` + storyViewFrom + `
 WHERE st.id = $1`
 	var v StoryView

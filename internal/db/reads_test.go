@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -161,6 +162,83 @@ func TestGetEnrichedAndTopicRegistry(t *testing.T) {
 	// AI engineering (2) before nuclear (1).
 	if reg[0].Topic != "AI engineering" || reg[0].Count != 2 {
 		t.Fatalf("topic order/count: %+v", reg)
+	}
+}
+
+// seedDigest inserts one newsletter with the given raw HTML and items (each
+// carrying its own kind/title/snippet), returning the inserted stories in
+// position order. Unlike seedStory it leaves items unscored — these tests only
+// exercise GetEnriched's structural fields.
+func seedDigest(t *testing.T, pool *pgxpool.Pool, sourceName, identity, rawHTML string, items []Story) []Story {
+	t.Helper()
+	ctx := context.Background()
+	src, err := NewSourceRepo(pool).GetOrCreate(ctx, SourceKindNewsletter, identity, sourceName)
+	if err != nil {
+		t.Fatalf("seed source: %v", err)
+	}
+	now := time.Now().UTC()
+	nl, _, err := NewNewsletterRepo(pool).Insert(ctx, &Newsletter{
+		SourceID:   src.ID,
+		RawHTML:    ptr(rawHTML),
+		ReceivedAt: &now,
+	})
+	if err != nil {
+		t.Fatalf("seed newsletter: %v", err)
+	}
+	out, err := NewStoryRepo(pool).InsertMany(ctx, nl.ID, src.ID, items)
+	if err != nil {
+		t.Fatalf("seed digest: %v", err)
+	}
+	return out
+}
+
+// TestGetEnrichedSegmentedSpansAllKinds guards CTFG-36 defect A: when
+// segmentation demotes a digest's genuine sibling stories to blurb/ad, a lone
+// surviving story remains. The "segmented" flag must still report true (so the
+// Reader slices that story's own segment) rather than treating it as a single
+// essay and dumping the entire newsletter.
+func TestGetEnrichedSegmentedSpansAllKinds(t *testing.T) {
+	pool := setupDB(t)
+	ctx := context.Background()
+	repo := NewStoryRepo(pool)
+
+	const lead = "Researchers at the institute discovered that migrating birds use quantum effects to navigate across whole continents during long seasonal journeys"
+	const adSnip = "This issue is brought to you by AcmeVPN the fast secure tunnel trusted by millions of remote workers everywhere today"
+	rawHTML := "<p>" + lead + ".</p><p>" + adSnip + ".</p>"
+
+	items := seedDigest(t, pool, "Daily", "daily@x", rawHTML, []Story{
+		{Position: 0, Kind: KindStory, Title: ptr("Quantum Birds"), Snippet: ptr(lead)},
+		{Position: 1, Kind: KindAd, Title: ptr("AcmeVPN"), Snippet: ptr(adSnip)},
+	})
+
+	v, err := repo.GetEnriched(ctx, items[0].ID)
+	if err != nil {
+		t.Fatalf("GetEnriched: %v", err)
+	}
+	if !v.Segmented {
+		t.Fatal("lone story with an ad sibling must be segmented (a digest), got Segmented=false")
+	}
+	if v.SegmentText == nil {
+		t.Fatal("segmented story should have sliced segment text, got nil")
+	}
+	if !strings.Contains(*v.SegmentText, "migrating birds") {
+		t.Fatalf("segment missing the lead story: %q", *v.SegmentText)
+	}
+	if strings.Contains(*v.SegmentText, "AcmeVPN") {
+		t.Fatalf("segment leaked the sibling ad (whole-newsletter dump): %q", *v.SegmentText)
+	}
+
+	// A true single essay (no siblings) stays non-segmented: the whole body IS
+	// the story, rendered inline by the Reader.
+	solo := seedDigest(t, pool, "Essayist", "essay@x", "<p>"+lead+".</p>", []Story{
+		{Position: 0, Kind: KindStory, Title: ptr("Solo"), Snippet: ptr(lead)},
+	})
+	sv, err := repo.GetEnriched(ctx, solo[0].ID)
+	if err != nil {
+		t.Fatalf("GetEnriched solo: %v", err)
+	}
+	if sv.Segmented {
+		t.Fatal("a single-item newsletter must not be segmented")
 	}
 }
 

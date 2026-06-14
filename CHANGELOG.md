@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.5.7](https://github.com/Einlanzerous/centrifuge/compare/v1.5.6...v1.5.7) (2026-06-14)
+
+
+### Bug Fixes
+
+* **reader:** segment lone-survivor digests instead of dumping the email (CTFG-36) ([dd0ec5b](https://github.com/Einlanzerous/centrifuge/commit/dd0ec5b1406cfa01105984778e565bdfed5b8ab1))
+* **reader:** segment lone-survivor digests instead of dumping the email (CTFG-36) ([ec7a459](https://github.com/Einlanzerous/centrifuge/commit/ec7a459f2d464b4735c1286e7b131a84b8293517))
+
 ## [1.5.6](https://github.com/Einlanzerous/centrifuge/compare/v1.5.5...v1.5.6) (2026-06-14)
 
 

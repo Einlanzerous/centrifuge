@@ -108,12 +108,28 @@ func (e *TruncatedError) Error() string {
 	return fmt.Sprintf("ai: model output truncated (recovered %d complete item(s))", e.Recovered)
 }
 
+// EmptyError signals the model returned a structurally valid but empty array —
+// it segmented nothing out of the newsletter. For a real newsletter this is
+// almost always a spurious generation, not a true "no content here": observed
+// with the gemma-4 QAT quant, which deterministically emits "[]" for certain
+// long inputs while the same model returns a full segmentation for a
+// near-identical one, and which only fails ~1/3 of the time once sampling is
+// stochastic (CTFG-59). Returning it as a typed error rather than (nil, nil)
+// lets the worker treat the empty as retryable and, when a re-roll can't help,
+// mark the newsletter failed — so a whole newsletter is never silently dropped
+// from the digest as a clean "scored, 0 stories".
+type EmptyError struct{}
+
+func (e *EmptyError) Error() string { return "ai: model returned an empty array (no items)" }
+
 // ParseItems strictly validates and normalizes a model response into scored
 // items. It tolerates the array being wrapped in an object (a common model
 // quirk under format:"json") but treats fundamentally unparseable output as an
 // error so the worker marks the newsletter failed instead of persisting junk.
 //
-// An empty array is a valid "nothing here" answer and returns (nil, nil).
+// An empty array returns (nil, *EmptyError): for a real newsletter "[]" is
+// almost always a spurious generation, not a true "nothing here", so the worker
+// treats it as retryable rather than a clean zero-story completion (CTFG-59).
 // Individual useless items (no title and no snippet) are dropped; if every item
 // is dropped from a non-empty response, that's an error (the model returned
 // shapes but no content).
@@ -133,7 +149,10 @@ func ParseItems(raw string) ([]ScoredItem, error) {
 		return out, &TruncatedError{Recovered: len(out)}
 	}
 	if len(arr) == 0 {
-		return nil, nil // a valid "nothing here" answer.
+		// The model segmented nothing. For a real newsletter that's almost always
+		// spurious (CTFG-59), so surface it as a typed error and let the worker
+		// decide (re-roll vs. fail) rather than silently completing with 0 stories.
+		return nil, &EmptyError{}
 	}
 	if len(out) == 0 {
 		return nil, errors.New("ai: response had items but none were usable")

@@ -225,6 +225,25 @@ func (w *Worker) handleScoreError(ctx context.Context, nl db.Newsletter, items [
 		return repo.MarkFailed(ctx, nl.ID, scoreErr.Error())
 	}
 
+	var ee *ai.EmptyError
+	if errors.As(scoreErr, &ee) {
+		// The model segmented nothing. For a real newsletter an empty "[]" is
+		// almost always spurious (CTFG-59), so don't silently complete it with zero
+		// stories. Re-roll while sampling is stochastic and the budget allows (a
+		// re-run usually recovers); at temperature 0 a retry reproduces the
+		// identical empty (CTFG-45), so mark it failed instead — surfacing the gap
+		// as a diagnosable, recoverable failure rather than hiding it as a clean
+		// "scored, 0 stories".
+		if !w.scorer.Deterministic() && nl.ScoringAttempts < w.maxAttempts {
+			w.logger.Warn("scoring returned empty; requeuing for retry",
+				"newsletter", nl.ID, "attempt", nl.ScoringAttempts, "max", w.maxAttempts)
+			return repo.Requeue(ctx, nl.ID)
+		}
+		w.logger.Error("scoring returned empty with no retry left; marking failed",
+			"newsletter", nl.ID, "attempts", nl.ScoringAttempts, "deterministic", w.scorer.Deterministic())
+		return repo.MarkFailed(ctx, nl.ID, scoreErr.Error())
+	}
+
 	w.logger.Error("scoring terminal failure; marking failed", "newsletter", nl.ID, "error", scoreErr)
 	return repo.MarkFailed(ctx, nl.ID, scoreErr.Error())
 }
@@ -261,7 +280,10 @@ func (w *Worker) persist(ctx context.Context, nl db.Newsletter, items []ai.Score
 	}
 
 	if len(items) == 0 {
-		// The model found nothing worth segmenting; still a clean completion.
+		// Defensive: the normal empty-response path now returns *ai.EmptyError and
+		// is handled (retry/fail) before reaching persist (CTFG-59), so this only
+		// fires if a caller hands us an empty-but-no-error result. Complete cleanly
+		// rather than write zero stories behind a still-scoring newsletter.
 		if err := newsletters.UpdateStatus(ctx, nl.ID, db.StatusScored); err != nil {
 			return err
 		}

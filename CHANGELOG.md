@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.5.8](https://github.com/Einlanzerous/centrifuge/compare/v1.5.7...v1.5.8) (2026-06-22)
+
+
+### Bug Fixes
+
+* **scoring:** guard empty "[]" model response instead of silent-dropping (CTFG-59) ([e91c9a4](https://github.com/Einlanzerous/centrifuge/commit/e91c9a42b1c8d025759da9db01cfa3c9b3b5faf3))
+* **scoring:** guard empty "[]" model response instead of silent-dropping (CTFG-59) ([3dc2403](https://github.com/Einlanzerous/centrifuge/commit/3dc2403067e9e0dee7773c450c562424af4573e2))
+* **web:** bind nginx dual-stack so localhost healthcheck passes (CTFG-60) ([81a78fb](https://github.com/Einlanzerous/centrifuge/commit/81a78fb5882b14d95821c62a77435b08b6246878))
+* **web:** bind nginx dual-stack so localhost healthcheck passes (CTFG-60) ([a909c90](https://github.com/Einlanzerous/centrifuge/commit/a909c90fbaeb6bb1101509a758a14e8c2daefc3e))
+
 ## [1.5.7](https://github.com/Einlanzerous/centrifuge/compare/v1.5.6...v1.5.7) (2026-06-14)
 
 

@@ -135,17 +135,22 @@ func scoreFixture(ctx context.Context, scorer *ai.Scorer, path string, maxChars 
 	start := time.Now()
 	items, err := scorer.Score(ctx, in)
 	elapsed := time.Since(start).Round(time.Millisecond)
-	// A truncated response is not a hard failure: the scorer salvages the
-	// complete leading items, so show them (with a note) rather than aborting
-	// the fixture — otherwise transient EOFs on big digests skew the eval gate.
+	// A truncated or empty response is not a hard failure: truncation salvages
+	// the complete leading items, and an empty "[]" (CTFG-59) is a model-quality
+	// signal worth seeing — so note them rather than aborting the fixture,
+	// otherwise transient model glitches on big digests skew the eval gate.
 	var truncated *ai.TruncatedError
-	if err != nil && !errors.As(err, &truncated) {
+	var empty *ai.EmptyError
+	if err != nil && !errors.As(err, &truncated) && !errors.As(err, &empty) {
 		return err
 	}
 
 	fmt.Printf("fixture: %s  (%s, %d prepped chars, %s)\n", name, kind, len([]rune(body)), elapsed)
 	if truncated != nil {
 		fmt.Printf("  ⚠ TRUNCATED model output — salvaged %d complete item(s)\n", truncated.Recovered)
+	}
+	if empty != nil {
+		fmt.Printf("  ⚠ EMPTY model output — model segmented nothing ([])\n")
 	}
 	fmt.Printf("  items: %d  (%s)\n", len(items), kindBreakdown(items))
 	for i, it := range items {

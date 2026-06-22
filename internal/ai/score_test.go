@@ -160,9 +160,13 @@ func TestParseItemsSingleObjectWithTrailingJunk(t *testing.T) {
 }
 
 func TestParseItemsEmptyArray(t *testing.T) {
+	// An empty "[]" is spurious for a real newsletter (CTFG-59): ParseItems
+	// returns a typed *EmptyError so the worker can retry/fail it instead of
+	// silently completing the newsletter with zero stories.
 	items, err := ParseItems(`[]`)
-	if err != nil {
-		t.Fatalf("ParseItems([]) error: %v", err)
+	var ee *EmptyError
+	if !errors.As(err, &ee) {
+		t.Fatalf("ParseItems([]) error = %v, want *EmptyError", err)
 	}
 	if items != nil {
 		t.Errorf("items = %v, want nil for empty array", items)

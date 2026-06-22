@@ -240,6 +240,9 @@ func TestProcessOneValidationErrorFails(t *testing.T) {
 	}
 }
 
+// A scorer that returns no items AND no error is a defensive path (the real
+// empty-response path returns *ai.EmptyError, see below): persist still completes
+// the newsletter cleanly rather than leaving it stuck mid-scoring.
 func TestProcessOneEmptyItemsCompletesWithNoStories(t *testing.T) {
 	pool := setupDB(t)
 	ctx := context.Background()
@@ -255,6 +258,37 @@ func TestProcessOneEmptyItemsCompletesWithNoStories(t *testing.T) {
 	stories, _ := db.NewStoryRepo(pool).ListByNewsletter(ctx, nl.ID)
 	if len(stories) != 0 {
 		t.Errorf("got %d stories, want 0", len(stories))
+	}
+}
+
+// CTFG-59: an empty "[]" under greedy decoding can't be re-rolled away (a retry
+// reproduces the identical empty, per CTFG-45), so mark failed — surfacing the
+// gap instead of silently completing the newsletter with zero stories.
+func TestProcessOneEmptyDeterministicFails(t *testing.T) {
+	pool := setupDB(t)
+	nl := seedPending(t, pool, "x", "body")
+
+	scorer := &stubScorer{deterministic: true, items: nil, err: &ai.EmptyError{}}
+	if err := quietWorker(pool, scorer).processOne(context.Background(), nl); err != nil {
+		t.Fatalf("processOne: %v", err)
+	}
+	if got := statusOf(t, pool, nl.ID); got != db.StatusFailed {
+		t.Errorf("status = %q, want failed (deterministic empty can't be re-rolled)", got)
+	}
+}
+
+// CTFG-59: under stochastic sampling an empty "[]" is requeued within the attempt
+// budget — a re-roll usually recovers a real segmentation.
+func TestProcessOneEmptyStochasticRequeues(t *testing.T) {
+	pool := setupDB(t)
+	nl := seedPending(t, pool, "x", "body") // ScoringAttempts 0 < maxAttempts
+
+	scorer := &stubScorer{deterministic: false, items: nil, err: &ai.EmptyError{}}
+	if err := quietWorker(pool, scorer).processOne(context.Background(), nl); err != nil {
+		t.Fatalf("processOne: %v", err)
+	}
+	if got := statusOf(t, pool, nl.ID); got != db.StatusPending {
+		t.Errorf("status = %q, want pending_scoring (stochastic empty retried within budget)", got)
 	}
 }
 

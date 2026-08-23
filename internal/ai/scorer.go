@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 )
 
 // ScoreInput is the per-newsletter material the scorer turns into a prompt. The
@@ -65,18 +64,14 @@ func WithPromptStyle(style string) ScorerOption {
 	return func(s *Scorer) { s.promptStyle = style }
 }
 
-// compact reports whether this scorer uses the compact prompt variant — forced
-// by WithPromptStyle, else chosen by model family: glimmer collapses a digest
-// to one item under the full prompt's instruction bulk (CTFG-61), so it gets
-// the compact one.
+// compact reports whether this scorer uses the compact prompt variant. Only an
+// explicit WithPromptStyle("compact") selects it: it was built to test whether
+// low instruction bulk rescues glimmer's single-item collapse (CTFG-61), and
+// measured 2026-08-23 it does NOT — glimmer collapsed a 1.5k digest to one
+// item under standard AND compact. Kept as an experiment knob for future
+// prompt work, never a default.
 func (s *Scorer) compact() bool {
-	switch s.promptStyle {
-	case "compact":
-		return true
-	case "standard":
-		return false
-	}
-	return strings.Contains(s.client.Model(), "glimmer")
+	return s.promptStyle == "compact"
 }
 
 // PromptVersion is the version stamp for stories this scorer produces.

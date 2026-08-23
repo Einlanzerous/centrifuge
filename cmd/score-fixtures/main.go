@@ -42,6 +42,7 @@ func main() {
 	numPredict := flag.Int("num-predict", config.DefaultOllamaNumPredict, "cap on tokens generated per call (matches prod; 0 = unbounded)")
 	temperature := flag.Float64("temperature", config.DefaultOllamaTemperature, "sampling temperature (matches prod; 0 = greedy)")
 	chunkChars := flag.Int("chunk-chars", config.DefaultScoringChunkChars, "digest chunking target in prepped chars (matches prod; 0 = score whole)")
+	numCtx := flag.Int("num-ctx", config.DefaultOllamaNumCtx, "pin options.num_ctx per request (matches prod; 0 = server default)")
 	raw := flag.Bool("raw", false, "print the model's unparsed JSON response per fixture (debug)")
 	prepOnly := flag.Bool("prep-only", false, "print the prepped body the model would see and skip scoring (no Ollama needed)")
 	flag.Parse()
@@ -64,6 +65,9 @@ func main() {
 	scoreOpts := map[string]any{"temperature": *temperature}
 	if *numPredict > 0 {
 		scoreOpts["num_predict"] = *numPredict
+	}
+	if *numCtx > 0 {
+		scoreOpts["num_ctx"] = *numCtx
 	}
 	scorer := ai.NewScorer(
 		ai.NewClient(*url, *model, ai.WithTimeout(*timeout)),

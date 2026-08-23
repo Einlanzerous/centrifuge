@@ -28,6 +28,14 @@ const (
 	// (~30 items) while keeping the worst case (~280s at 22 tok/s) well under
 	// OLLAMA_TIMEOUT_SECONDS — keep that ordering when tuning either value.
 	DefaultOllamaNumPredict = 6144
+	// DefaultOllamaNumCtx pins the context window per scoring request
+	// (options.num_ctx), decoupling scoring from the Ollama server's global
+	// OLLAMA_CONTEXT_LENGTH. The server default of 64K forces a huge KV cache
+	// on every load (slow loads, VRAM pressure) and empirically *hurt* gemma's
+	// segmentation vs 32K (design/2026-07-16-gemma4-restack-eval.md). 16K
+	// covers the worst case comfortably: a 24k-char whole-essay body ≈ 7k
+	// tokens + prompt + 6144 output tokens. <= 0 leaves the server default.
+	DefaultOllamaNumCtx = 16384
 	// DefaultScoringChunkChars is the digest chunking target fed to the scorer
 	// (ai.WithChunkChars): bodies over it are shape-probed and, when
 	// digest-shaped, scored in ~this-many-rune chunks (CTFG-62). Both local
@@ -83,6 +91,11 @@ type Config struct {
 	// call. Always sent — 0 (the default) means greedy decoding, not "unset"
 	// (CTFG-43).
 	OllamaTemperature float64
+
+	// OllamaNumCtx pins options.num_ctx on every scoring call so scoring is
+	// decoupled from the server's global context length. <= 0 sends nothing
+	// (server default applies).
+	OllamaNumCtx int
 
 	// IngestToken authenticates inbound ingestion requests.
 	IngestToken string
@@ -143,6 +156,7 @@ func Load() (*Config, error) {
 		OllamaMaxRetries:   DefaultOllamaMaxRetries,
 		OllamaNumPredict:   DefaultOllamaNumPredict,
 		OllamaTemperature:  DefaultOllamaTemperature,
+		OllamaNumCtx:       DefaultOllamaNumCtx,
 		IngestToken:        os.Getenv("INGEST_TOKEN"),
 		IngestMaxChars:     DefaultIngestMaxChars,
 		Port:               DefaultPort,
@@ -259,6 +273,14 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("config: SCORING_MAX_ATTEMPTS must be >= 1, got %d", n)
 		}
 		cfg.ScoringMaxAttempts = n
+	}
+
+	if v := os.Getenv("OLLAMA_NUM_CTX"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("config: invalid OLLAMA_NUM_CTX %q: %w", v, err)
+		}
+		cfg.OllamaNumCtx = n
 	}
 
 	if v := os.Getenv("SCORING_CHUNK_CHARS"); v != "" {

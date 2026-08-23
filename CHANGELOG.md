@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.6.0](https://github.com/Einlanzerous/centrifuge/compare/v1.5.8...v1.6.0) (2026-08-23)
+
+
+### Features
+
+* **ai:** per-model prompt style — compact variant for glimmer (CTFG-61/CTFG-62) ([2305026](https://github.com/Einlanzerous/centrifuge/commit/2305026b28065671e30dff8956cb5a468f73e398))
+* **ai:** require snippet in the items schema (CTFG-62 M1) ([d0ce88d](https://github.com/Einlanzerous/centrifuge/commit/d0ce88ddc23c9233b4d10211bdd4b91e429ff7c1))
+* **config:** stream model weights instead of mmap (OLLAMA_USE_MMAP, default false) (CTFG-62) ([7d9875a](https://github.com/Einlanzerous/centrifuge/commit/7d9875a3ad5540a9c2d1628fb4d100a2208354db))
+* **health:** report version and sha on /healthz (CTFG-64) ([df8b6c6](https://github.com/Einlanzerous/centrifuge/commit/df8b6c6f42d890fa7b70596448b97deca3c126ba))
+* **health:** report version and sha on /healthz (CTFG-64) ([a91506d](https://github.com/Einlanzerous/centrifuge/commit/a91506d297deb247453472170e3b0f819bfd4cb8))
+* **scoring:** pin options.num_ctx per request (CTFG-62) ([08bb937](https://github.com/Einlanzerous/centrifuge/commit/08bb93783d1f76a263c4890bffec026472d7861d))
+* **scoring:** shape-probed chunked scoring + escalation gate (CTFG-62) ([637854c](https://github.com/Einlanzerous/centrifuge/commit/637854c300d8dba7509a6c51bdbb33b3e1b0270a))
+* **scoring:** shape-probed chunking, escalation gate, runner tuning (CTFG-62) ([311bdfd](https://github.com/Einlanzerous/centrifuge/commit/311bdfdf501d8cf7c6235bdf31794e61f8776378))
+
+
+### Bug Fixes
+
+* **ai:** collapse immediately repeated phrases in model text (CTFG-56) ([983f4e7](https://github.com/Einlanzerous/centrifuge/commit/983f4e7ef7e8d0fdb0503d537bb4dafe2ac31ec6))
+* **ai:** compact prompt is opt-in only — it does not rescue glimmer (CTFG-61) ([93443cf](https://github.com/Einlanzerous/centrifuge/commit/93443cf16797bf5c50afb551c9a14fd8bb2d854f))
+* **ai:** done:false partial-envelope guard + prose prompt rewrite (CTFG-63) ([8b805b1](https://github.com/Einlanzerous/centrifuge/commit/8b805b1c859e2baffb64436019264fe9a60c1eff))
+* **ai:** replace inline JSON element template with prose field description (CTFG-63) ([396e5ef](https://github.com/Einlanzerous/centrifuge/commit/396e5efea4cc2b6e34adede54a73cf4806cdf19d))
+* **ai:** surface done:false Ollama envelopes as attributable truncation (CTFG-63) ([aa7fb5e](https://github.com/Einlanzerous/centrifuge/commit/aa7fb5e6ad8f3f441d35fbe3559add58dbf7cbc5))
+* **db:** inline the tag-name conversions staticcheck now flags (CTFG-64) ([926a60a](https://github.com/Einlanzerous/centrifuge/commit/926a60abb9fa02959c8c1cbe271764e0ce79f1b1))
+* **db:** satisfy staticcheck SA6001 in htmlToText tag lookups ([c5289f5](https://github.com/Einlanzerous/centrifuge/commit/c5289f5be519c8889cd484ba7241024fdf9605d8))
+* **scoring:** harden chunked-path failure handling and gate accuracy (CTFG-62) ([05da1db](https://github.com/Einlanzerous/centrifuge/commit/05da1db333e07193acbba55daf051ca2d110a058))
+* **scoring:** harden chunked-path failure handling and gate accuracy (CTFG-62) ([da788f9](https://github.com/Einlanzerous/centrifuge/commit/da788f91d3c5bf825a0db5366f5a008603a39fd9))
+
 ## [1.5.8](https://github.com/Einlanzerous/centrifuge/compare/v1.5.7...v1.5.8) (2026-06-22)
 
 

@@ -61,7 +61,7 @@ func TestGenerateRetriesOn5xxThenSucceeds(t *testing.T) {
 			http.Error(w, "model loading", http.StatusServiceUnavailable)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(generateResponse{Response: `{"ok":true}`})
+		_ = json.NewEncoder(w).Encode(generateResponse{Response: `{"ok":true}`, Done: true})
 	}))
 	defer srv.Close()
 
@@ -147,6 +147,27 @@ func TestGenerateEmptyResponseIsDecodeError(t *testing.T) {
 	var de *DecodeError
 	if !errors.As(err, &de) {
 		t.Fatalf("err = %v, want *DecodeError for empty response", err)
+	}
+}
+
+func TestGenerateDoneFalseIsPartialError(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		_ = json.NewEncoder(w).Encode(generateResponse{Response: `[{"title":"x"}`, Done: false})
+	}))
+	defer srv.Close()
+
+	_, err := fastClient(srv, WithMaxRetries(3)).Generate(context.Background(), "p", nil)
+	var pe *PartialError
+	if !errors.As(err, &pe) {
+		t.Fatalf("err = %v, want *PartialError", err)
+	}
+	if pe.Response != `[{"title":"x"}` {
+		t.Errorf("partial response = %q, want the cut text preserved", pe.Response)
+	}
+	if n := calls.Load(); n != 1 {
+		t.Errorf("calls = %d, want 1 (a partial envelope is not retried by the client)", n)
 	}
 }
 

@@ -48,6 +48,27 @@ type DecodeError struct{ Err error }
 func (e *DecodeError) Error() string { return fmt.Sprintf("ollama decode: %v", e.Err) }
 func (e *DecodeError) Unwrap() error { return e.Err }
 
+// PartialError is returned when Ollama answered 2xx but the envelope reports
+// done:false — the server cut generation and shipped whatever had been produced
+// (observed with no done_reason and no eval_count; CTFG-63). The partial text is
+// carried so the caller can salvage the complete leading items from it, the same
+// way an unterminated JSON array is salvaged. Not retried by the client: the cut
+// already consumed a full generation, and the scorer's truncation path owns the
+// retry/salvage decision.
+type PartialError struct {
+	// Response is the partial model text the envelope carried.
+	Response string
+	// DoneReason is Ollama's done_reason, usually empty on a cut.
+	DoneReason string
+}
+
+func (e *PartialError) Error() string {
+	if e.DoneReason != "" {
+		return fmt.Sprintf("ollama partial envelope: done:false (done_reason %q)", e.DoneReason)
+	}
+	return "ollama partial envelope: done:false"
+}
+
 // Client is a typed client for a single Ollama server's /api/generate endpoint.
 // It is safe for concurrent use.
 type Client struct {
@@ -151,10 +172,13 @@ type generateRequest struct {
 }
 
 // generateResponse is the subset of Ollama's reply we consume. Response holds
-// the model's text — JSON, given format:"json".
+// the model's text — JSON, given format:"json". Done reports whether generation
+// ran to completion; with stream:false a healthy reply is always done:true, so
+// done:false marks a server-side cut (see PartialError).
 type generateResponse struct {
-	Response string `json:"response"`
-	Done     bool   `json:"done"`
+	Response   string `json:"response"`
+	Done       bool   `json:"done"`
+	DoneReason string `json:"done_reason"`
 }
 
 // Generate sends prompt to the model and returns the raw response text,
@@ -254,6 +278,12 @@ func (c *Client) doOnce(ctx context.Context, body []byte) (string, error) {
 	}
 	if strings.TrimSpace(gr.Response) == "" {
 		return "", &DecodeError{Err: errors.New("empty response field")}
+	}
+	if !gr.Done {
+		// The envelope carries a partial response the server cut early (CTFG-63).
+		// Surface it typed so the caller can salvage attributably instead of
+		// mistaking the partial for a complete, genuinely short answer.
+		return "", &PartialError{Response: gr.Response, DoneReason: gr.DoneReason}
 	}
 	return gr.Response, nil
 }

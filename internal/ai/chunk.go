@@ -101,23 +101,27 @@ func isSentenceEnd(r rune) bool {
 // mergeChunkItems concatenates per-chunk items in reading order and repairs the
 // one artifact chunking introduces: a story cut by a chunk boundary appears
 // twice — its opening ends one chunk, its continuation starts the next. When
-// the last item of a chunk and the first item of the following chunk carry the
-// same normalized title they are one story, merged preferring the first
-// occurrence's opening (its snippet anchors the story's true start) and the
-// richer of the two summaries. Titles elsewhere are left alone: digests repeat
-// sponsor blocks legitimately.
+// the last item of a chunk and the first item of the *immediately following*
+// chunk carry the same normalized title they are one story, merged preferring
+// the first occurrence's opening (its snippet anchors the story's true start)
+// and the richer of the two summaries. Titles elsewhere are left alone —
+// digests repeat sponsor blocks legitimately — and a gap chunk between two
+// same-titled items (empty or failed, contributing nothing) breaks adjacency:
+// items separated by a whole chunk of text cannot be halves of one story.
 func mergeChunkItems(perChunk [][]ScoredItem) []ScoredItem {
 	var out []ScoredItem
-	for _, items := range perChunk {
+	lastChunk := -2 // index of the chunk whose items currently end out
+	for ci, items := range perChunk {
 		if len(items) == 0 {
 			continue
 		}
 		rest := items
-		if len(out) > 0 && sameStory(out[len(out)-1], items[0]) {
+		if len(out) > 0 && ci == lastChunk+1 && sameStory(out[len(out)-1], items[0]) {
 			out[len(out)-1] = mergeSplitStory(out[len(out)-1], items[0])
 			rest = items[1:]
 		}
 		out = append(out, rest...)
+		lastChunk = ci
 	}
 	return out
 }
@@ -140,6 +144,15 @@ func normalizeTitle(t string) string {
 // score takes the max (the half that saw more of the body judged better);
 // labels union up to the cap.
 func mergeSplitStory(a, b ScoredItem) ScoredItem {
+	// The opening half's snippet is preferred (it anchors the story's true
+	// start) but an empty one is useless to the reader — backfill from the
+	// continuation so the segment still anchors somewhere.
+	if a.Snippet == "" {
+		a.Snippet = b.Snippet
+	}
+	if a.Section == "" {
+		a.Section = b.Section
+	}
 	if len(b.Summary) > len(a.Summary) {
 		a.Summary = b.Summary
 	}

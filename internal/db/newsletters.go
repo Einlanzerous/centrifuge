@@ -167,11 +167,12 @@ func (r *NewsletterRepo) UpdateStatus(ctx context.Context, id, status string) er
 
 // Requeue flips a newsletter back to pending_scoring for another scoring attempt
 // (the next claim re-increments scoring_attempts) and clears any prior
-// scoring_error. Used by the worker to retry a transient failure. Returns
+// scoring_error and gate findings — both describe a scoring round the requeue
+// supersedes. Used by the worker to retry a transient failure. Returns
 // pgx.ErrNoRows if no newsletter has the given id.
 func (r *NewsletterRepo) Requeue(ctx context.Context, id string) error {
 	ct, err := r.db.Exec(ctx,
-		`UPDATE newsletters SET processing_status = $2, scoring_error = NULL WHERE id = $1`,
+		`UPDATE newsletters SET processing_status = $2, scoring_error = NULL, gate_findings = NULL WHERE id = $1`,
 		id, StatusPending)
 	if err != nil {
 		return err
@@ -202,11 +203,12 @@ func (r *NewsletterRepo) SetGateFindings(ctx context.Context, id string, finding
 }
 
 // MarkFailed transitions a newsletter to failed and records the reason in
-// scoring_error so the failure is diagnosable without log-diving. Returns
-// pgx.ErrNoRows if no newsletter has the given id.
+// scoring_error so the failure is diagnosable without log-diving. Gate findings
+// from a superseded round are cleared — scoring_error is the failure's record.
+// Returns pgx.ErrNoRows if no newsletter has the given id.
 func (r *NewsletterRepo) MarkFailed(ctx context.Context, id, reason string) error {
 	ct, err := r.db.Exec(ctx,
-		`UPDATE newsletters SET processing_status = $2, scoring_error = $3 WHERE id = $1`,
+		`UPDATE newsletters SET processing_status = $2, scoring_error = $3, gate_findings = NULL WHERE id = $1`,
 		id, StatusFailed, reason)
 	if err != nil {
 		return err

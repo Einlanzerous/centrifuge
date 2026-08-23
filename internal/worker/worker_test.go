@@ -16,6 +16,7 @@ import (
 // stubScorer is a deterministic stand-in for *ai.Scorer.
 type stubScorer struct {
 	items         []ai.ScoredItem
+	shape         ai.Shape
 	err           error
 	calls         int
 	deterministic bool
@@ -23,7 +24,7 @@ type stubScorer struct {
 
 func (s *stubScorer) Score(_ context.Context, _ ai.ScoreInput) (ai.ScoreResult, error) {
 	s.calls++
-	return ai.ScoreResult{Items: s.items, Chunks: 1}, s.err
+	return ai.ScoreResult{Items: s.items, Shape: s.shape, Chunks: 1}, s.err
 }
 
 func (s *stubScorer) Model() string { return "stub-model" }

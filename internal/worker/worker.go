@@ -172,8 +172,9 @@ func (w *Worker) runOnce(ctx context.Context) {
 // update failed and the row is left as-is for recovery.
 func (w *Worker) processOne(ctx context.Context, nl db.Newsletter) error {
 	in := ai.ScoreInput{
-		Subject: deref(nl.Subject),
-		Body:    deref(nl.BodyText),
+		SourceName: w.sourceName(ctx, nl.SourceID),
+		Subject:    deref(nl.Subject),
+		Body:       deref(nl.BodyText),
 	}
 	// Nothing to feed the model — mark scored with zero stories rather than
 	// burning a generate call on an empty body.
@@ -416,6 +417,22 @@ func (w *Worker) requeueStale(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 	return ct.RowsAffected(), nil
+}
+
+// sourceName resolves the publication's display name for the scoring prompt
+// and shape probe — BuildPrompt uses it as segmentation context, and the eval
+// harness has always passed it, so prod should feed the model the same inputs
+// the evals validated. Best-effort: a lookup failure just scores nameless.
+func (w *Worker) sourceName(ctx context.Context, sourceID string) string {
+	if sourceID == "" {
+		return ""
+	}
+	src, err := db.NewSourceRepo(w.pool).GetByID(ctx, sourceID)
+	if err != nil {
+		w.logger.Warn("resolve source name for scoring", "source", sourceID, "error", err)
+		return ""
+	}
+	return src.Name
 }
 
 func deref(s *string) string {

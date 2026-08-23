@@ -189,3 +189,29 @@ func TestScoreOneEmptyChunkTolerated(t *testing.T) {
 		t.Errorf("items = %+v, want Alpha alone", res.Items)
 	}
 }
+
+func TestScoreFailedChunkDoesNotSinkSiblings(t *testing.T) {
+	var calls atomic.Int32
+	srv := chunkServer(t, "digest", map[string]string{
+		"ALPHAMARK": `[` + item("Alpha", "a") + `]`,
+		"BETAMARK":  `{"nope":true}`, // terminal validation junk: no array anywhere
+	}, &calls)
+	defer srv.Close()
+
+	body := chunkTestBody()
+	scorer := NewScorer(fastClient(srv), nil, WithChunkChars((len(body)+1)/2))
+	res, err := scorer.Score(context.Background(), ScoreInput{Body: body})
+	var tr *TruncatedError
+	if !errors.As(err, &tr) {
+		t.Fatalf("err = %v, want *TruncatedError carrying the chunk loss", err)
+	}
+	if !strings.Contains(tr.Reason, "1 of 2 chunk(s)") {
+		t.Errorf("reason = %q, want chunk attribution", tr.Reason)
+	}
+	if len(res.Items) != 1 || res.Items[0].Title != "Alpha" {
+		t.Errorf("items = %+v, want the healthy chunk's items kept", res.Items)
+	}
+	if res.FailedChunks != 1 {
+		t.Errorf("failedChunks = %d, want 1", res.FailedChunks)
+	}
+}

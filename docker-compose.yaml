@@ -16,6 +16,11 @@ services:
       # Ollama is NOT part of this compose — gemma4:31b runs on the LAN host.
       - OLLAMA_URL=${OLLAMA_URL:-http://imperial-construct:11434}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-gemma4:31b}
+      # Scoring tuning (defaults compiled in; here for visibility/override).
+      # OLLAMA_NUM_CTX pins the per-request context window; SCORING_CHUNK_CHARS
+      # is the digest chunking target, 0 disables chunking (CTFG-62).
+      - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-16384}
+      - SCORING_CHUNK_CHARS=${SCORING_CHUNK_CHARS:-5000}
       - INGEST_TOKEN=${INGEST_TOKEN}
       - RELEVANCE_TOPICS=${RELEVANCE_TOPICS:-AI engineering,urbanism,transit/trains,nuclear,tech,video games}
       - LOG_LEVEL=${LOG_LEVEL:-info}

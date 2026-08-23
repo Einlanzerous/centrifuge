@@ -36,6 +36,15 @@ const (
 	// addressed by removing its surface instead — the model is no longer asked to
 	// emit a "url" field, the one place it ran away (CTFG-46).
 	DefaultOllamaTemperature = 0.0
+	// Mail-feed (CTFG-24) defaults. The poller dials Gmail outbound, so it needs
+	// no public ingress; it mirrors the scoring worker's lifecycle.
+	DefaultMailfeedInterval = 120 * time.Second
+	DefaultMailfeedBatch    = 25
+	DefaultGmailUser        = "me"
+	// DefaultMailfeedLabel is the Gmail label applied to a message once it has been
+	// ingested; DefaultMailfeedQuery excludes it so each message is processed once.
+	DefaultMailfeedLabel = "centrifuge/ingested"
+	DefaultMailfeedQuery = "-label:centrifuge/ingested"
 )
 
 // DefaultRelevanceTopics is the fallback topic list used to bias scoring when
@@ -118,6 +127,33 @@ type Config struct {
 	// build absolute links in the RSS feed. Empty falls back to the request's
 	// own scheme+host.
 	PublicBaseURL string
+
+	// MailfeedEnabled turns the Gmail polling auto-feed on or off (CTFG-24). Off
+	// by default — it needs OAuth credentials, so it must be opted into.
+	MailfeedEnabled bool
+
+	// GmailClientID / GmailClientSecret / GmailRefreshToken are the OAuth2
+	// credentials the poller uses to mint access tokens for the Gmail API. All
+	// three are required when MailfeedEnabled is true.
+	GmailClientID     string
+	GmailClientSecret string
+	GmailRefreshToken string
+
+	// GmailUser is the mailbox the poller reads ("me" for the authorized account).
+	GmailUser string
+
+	// MailfeedInterval is how often the poller checks Gmail for new mail.
+	MailfeedInterval time.Duration
+
+	// MailfeedBatch caps how many messages the poller processes per tick.
+	MailfeedBatch int
+
+	// MailfeedQuery is the Gmail search filter selecting unprocessed mail.
+	MailfeedQuery string
+
+	// MailfeedLabel is the Gmail label applied to a message after it is ingested,
+	// marking it processed so the next poll skips it.
+	MailfeedLabel string
 }
 
 // Load reads configuration from the environment, applies defaults, and returns
@@ -143,6 +179,15 @@ func Load() (*Config, error) {
 		ScoringMaxAttempts: DefaultScoringMaxAttempts,
 		CORSAllowOrigin:    getEnvDefault("CORS_ALLOW_ORIGIN", "*"),
 		PublicBaseURL:      strings.TrimRight(os.Getenv("PUBLIC_BASE_URL"), "/"),
+		MailfeedEnabled:    false,
+		GmailClientID:      os.Getenv("GMAIL_CLIENT_ID"),
+		GmailClientSecret:  os.Getenv("GMAIL_CLIENT_SECRET"),
+		GmailRefreshToken:  os.Getenv("GMAIL_REFRESH_TOKEN"),
+		GmailUser:          getEnvDefault("GMAIL_USER", DefaultGmailUser),
+		MailfeedInterval:   DefaultMailfeedInterval,
+		MailfeedBatch:      DefaultMailfeedBatch,
+		MailfeedQuery:      getEnvDefault("MAILFEED_QUERY", DefaultMailfeedQuery),
+		MailfeedLabel:      getEnvDefault("MAILFEED_LABEL", DefaultMailfeedLabel),
 	}
 
 	if v := os.Getenv("PORT"); v != "" {
@@ -249,6 +294,36 @@ func Load() (*Config, error) {
 		cfg.ScoringMaxAttempts = n
 	}
 
+	if v := os.Getenv("MAILFEED_ENABLED"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("config: invalid MAILFEED_ENABLED %q: %w", v, err)
+		}
+		cfg.MailfeedEnabled = b
+	}
+
+	if v := os.Getenv("MAILFEED_INTERVAL_SECONDS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("config: invalid MAILFEED_INTERVAL_SECONDS %q: %w", v, err)
+		}
+		if n <= 0 {
+			return nil, fmt.Errorf("config: MAILFEED_INTERVAL_SECONDS must be > 0, got %d", n)
+		}
+		cfg.MailfeedInterval = time.Duration(n) * time.Second
+	}
+
+	if v := os.Getenv("MAILFEED_BATCH"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("config: invalid MAILFEED_BATCH %q: %w", v, err)
+		}
+		if n <= 0 {
+			return nil, fmt.Errorf("config: MAILFEED_BATCH must be > 0, got %d", n)
+		}
+		cfg.MailfeedBatch = n
+	}
+
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
@@ -259,6 +334,23 @@ func Load() (*Config, error) {
 func (c *Config) validate() error {
 	if c.DatabaseURL == "" {
 		return fmt.Errorf("config: DATABASE_URL is required")
+	}
+	// The Gmail feed can't authenticate without all three OAuth credentials, so
+	// fail fast rather than starting a poller that errors on every tick.
+	if c.MailfeedEnabled {
+		var missing []string
+		if c.GmailClientID == "" {
+			missing = append(missing, "GMAIL_CLIENT_ID")
+		}
+		if c.GmailClientSecret == "" {
+			missing = append(missing, "GMAIL_CLIENT_SECRET")
+		}
+		if c.GmailRefreshToken == "" {
+			missing = append(missing, "GMAIL_REFRESH_TOKEN")
+		}
+		if len(missing) > 0 {
+			return fmt.Errorf("config: MAILFEED_ENABLED=true requires %s", strings.Join(missing, ", "))
+		}
 	}
 	return nil
 }

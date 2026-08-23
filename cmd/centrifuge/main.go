@@ -25,6 +25,7 @@ import (
 	"github.com/Einlanzerous/centrifuge/internal/httpapi"
 	"github.com/Einlanzerous/centrifuge/internal/ingest"
 	applog "github.com/Einlanzerous/centrifuge/internal/log"
+	"github.com/Einlanzerous/centrifuge/internal/mailfeed"
 	"github.com/Einlanzerous/centrifuge/internal/worker"
 )
 
@@ -33,6 +34,17 @@ import (
 const migrationsDir = "migrations"
 
 func main() {
+	// authorize-gmail mints an OAuth refresh token and is a standalone utility —
+	// it needs no DATABASE_URL, so handle it before config.Load() (which requires
+	// one). It reads the two GMAIL_* credentials directly from the environment.
+	if len(os.Args) > 1 && os.Args[1] == "authorize-gmail" {
+		if err := runAuthorizeGmail(); err != nil {
+			slog.Error("authorize-gmail", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		// Logger not yet built; emit via the default slog logger.
@@ -62,6 +74,28 @@ func runMigrate(cfg *config.Config, logger *slog.Logger) {
 		os.Exit(1)
 	}
 	logger.Info("migrations applied")
+}
+
+// runAuthorizeGmail runs the one-time OAuth2 consent flow and prints a refresh
+// token to store in GMAIL_REFRESH_TOKEN. It reads GMAIL_CLIENT_ID and
+// GMAIL_CLIENT_SECRET straight from the environment so it needs no full config.
+func runAuthorizeGmail() error {
+	clientID, clientSecret := os.Getenv("GMAIL_CLIENT_ID"), os.Getenv("GMAIL_CLIENT_SECRET")
+	if clientID == "" || clientSecret == "" {
+		return fmt.Errorf("set GMAIL_CLIENT_ID and GMAIL_CLIENT_SECRET before running authorize-gmail")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	token, err := mailfeed.Authorize(ctx, clientID, clientSecret)
+	if err != nil {
+		return err
+	}
+	fmt.Println()
+	fmt.Println("Success. Set this in the environment (and PROD_ENV_FILE for prod):")
+	fmt.Println()
+	fmt.Println("  GMAIL_REFRESH_TOKEN=" + token)
+	return nil
 }
 
 func runServer(cfg *config.Config, logger *slog.Logger) error {
@@ -107,6 +141,41 @@ func runServer(cfg *config.Config, logger *slog.Logger) error {
 		}()
 	} else {
 		logger.Info("scoring worker disabled (SCORING_ENABLED=false)")
+	}
+
+	// The Gmail auto-feed (CTFG-24) polls outbound for new mail and feeds it
+	// through the same ingestor as /ingest. It shares the worker's lifecycle so
+	// it drains on shutdown. Off unless MAILFEED_ENABLED (it needs OAuth creds).
+	//
+	// Client construction does network I/O (token refresh + label resolution), so
+	// it runs inside the goroutine, not on the startup path: the feed is a
+	// non-critical background job, so a slow or failing Gmail must not block the
+	// HTTP server from listening nor take the whole process down — it logs and
+	// disables itself instead.
+	if cfg.MailfeedEnabled {
+		workerWG.Add(1)
+		go func() {
+			defer workerWG.Done()
+			client, err := mailfeed.NewGmailClient(workerCtx, mailfeed.OAuthConfig{
+				ClientID:     cfg.GmailClientID,
+				ClientSecret: cfg.GmailClientSecret,
+				RefreshToken: cfg.GmailRefreshToken,
+				User:         cfg.GmailUser,
+				Query:        cfg.MailfeedQuery,
+				Label:        cfg.MailfeedLabel,
+			})
+			if err != nil {
+				logger.Error("mail feed disabled: failed to initialize Gmail client", "error", err)
+				return
+			}
+			mailfeed.New(ingestor, client,
+				mailfeed.WithInterval(cfg.MailfeedInterval),
+				mailfeed.WithBatch(cfg.MailfeedBatch),
+				mailfeed.WithLogger(logger),
+			).Run(workerCtx)
+		}()
+	} else {
+		logger.Info("mail feed disabled (MAILFEED_ENABLED=false)")
 	}
 
 	httpServer := &http.Server{

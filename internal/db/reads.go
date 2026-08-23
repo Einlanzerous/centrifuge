@@ -287,12 +287,11 @@ func htmlToText(rawHTML string) string {
 			return normalizeBlockText(b.String())
 		case html.StartTagToken:
 			name, _ := z.TagName()
-			n := string(name)
-			if readerSkippableTags[n] {
+			if readerSkippableTags[string(name)] {
 				skip++
 				continue
 			}
-			if skip == 0 && blockTags[n] {
+			if skip == 0 && blockTags[string(name)] {
 				b.WriteByte('\n')
 			}
 		case html.SelfClosingTagToken:
@@ -301,14 +300,13 @@ func htmlToText(rawHTML string) string {
 			}
 		case html.EndTagToken:
 			name, _ := z.TagName()
-			n := string(name)
-			if readerSkippableTags[n] {
+			if readerSkippableTags[string(name)] {
 				if skip > 0 {
 					skip--
 				}
 				continue
 			}
-			if skip == 0 && blockTags[n] {
+			if skip == 0 && blockTags[string(name)] {
 				b.WriteByte('\n')
 			}
 		case html.TextToken:

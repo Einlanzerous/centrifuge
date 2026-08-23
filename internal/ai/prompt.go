@@ -11,6 +11,10 @@ import (
 // contract below changes — the eval harness (CTFG-23) diffs across versions.
 const PromptVersion = "2026-08-23.1"
 
+// PromptVersionCompact stamps stories scored with the compact prompt variant
+// (see BuildPromptCompact), so the two styles stay distinguishable in evals.
+const PromptVersionCompact = "2026-08-23.1c"
+
 // PromptInput is everything the prompt builder needs about one newsletter. The
 // caller derives Body from the cleaned, truncated text (Phase 2) so the model's
 // context window is never blown.
@@ -81,6 +85,44 @@ an integer relevance_score from 0 to 100; exactly one primary_topic label; and
 If the newsletter is empty or unintelligible, return an empty array.
 
 `)
+	fmt.Fprintf(&b, "SOURCE: %s\n", strings.TrimSpace(in.SourceName))
+	fmt.Fprintf(&b, "SUBJECT: %s\n\n", strings.TrimSpace(in.Subject))
+	b.WriteString("BODY:\n")
+	b.WriteString(strings.TrimSpace(in.Body))
+	b.WriteString("\n")
+	return b.String()
+}
+
+// BuildPromptCompact is the low-bulk prompt variant for models whose
+// segmentation collapses as instruction bulk grows — muse-glimmer returns a
+// single item under the full prompt regardless of schema, but segments a digest
+// into 8-12 items under a minimal one (CTFG-61 diagnostics). It carries the
+// same output contract as BuildPrompt in as few instruction blocks as possible;
+// ItemsSchema() still enforces the shape by grammar. Stories scored with it are
+// stamped PromptVersionCompact.
+func BuildPromptCompact(in PromptInput) string {
+	topics := strings.Join(in.Topics, ", ")
+	if topics == "" {
+		topics = "(none specified)"
+	}
+
+	var b strings.Builder
+	b.WriteString(`Split this email newsletter into ALL of its distinct items, in reading order.
+A digest yields MANY items — one per story, brief, ad, or sponsor/self-promo
+block. A single continuous essay yields exactly ONE item. Never treat the
+hidden inbox-preview/teaser line at the top as an item or a snippet.
+
+For EVERY item give: a short title; a snippet — the first sentence of the
+item's own body, copied verbatim; its kind (story = developed editorial
+content, blurb = one-liner or headline, ad = paid placement, promo =
+self-promotion); the section heading when the publication shows one; a 2-3
+sentence neutral summary (stories MUST have one; other kinds leave it empty);
+an integer relevance_score 0-100 for how well the item matches the reader's
+focus topics; one primary_topic label; and 0-5 secondary labels.
+
+`)
+	fmt.Fprintf(&b, "Reader focus topics: %s\n\n", topics)
+	b.WriteString("Return ONLY a JSON array with one element per item.\n\n")
 	fmt.Fprintf(&b, "SOURCE: %s\n", strings.TrimSpace(in.SourceName))
 	fmt.Fprintf(&b, "SUBJECT: %s\n\n", strings.TrimSpace(in.Subject))
 	b.WriteString("BODY:\n")

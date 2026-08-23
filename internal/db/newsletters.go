@@ -182,6 +182,25 @@ func (r *NewsletterRepo) Requeue(ctx context.Context, id string) error {
 	return nil
 }
 
+// SetGateFindings records the escalation-gate findings observed when this
+// newsletter's stories were persisted (CTFG-62) — nil/empty clears the column,
+// so a clean re-score erases a previous flag. Returns pgx.ErrNoRows if no
+// newsletter has the given id.
+func (r *NewsletterRepo) SetGateFindings(ctx context.Context, id string, findings []string) error {
+	var v any
+	if len(findings) > 0 {
+		v = findings
+	}
+	ct, err := r.db.Exec(ctx, `UPDATE newsletters SET gate_findings = $2 WHERE id = $1`, id, v)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
 // MarkFailed transitions a newsletter to failed and records the reason in
 // scoring_error so the failure is diagnosable without log-diving. Returns
 // pgx.ErrNoRows if no newsletter has the given id.

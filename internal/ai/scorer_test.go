@@ -25,7 +25,8 @@ func TestScorePartialEnvelopeSalvagesAsTruncated(t *testing.T) {
 	srv := partialServer(t, `[{"title":"kept","kind":"story","relevance_score":10,"primary_topic":"t","summary":"s"},{"title":"cut`)
 	defer srv.Close()
 
-	items, err := NewScorer(fastClient(srv), nil).Score(context.Background(), ScoreInput{Body: "b"})
+	res, err := NewScorer(fastClient(srv), nil).Score(context.Background(), ScoreInput{Body: "b"})
+	items := res.Items
 	var tr *TruncatedError
 	if !errors.As(err, &tr) {
 		t.Fatalf("err = %v, want *TruncatedError", err)
@@ -45,7 +46,8 @@ func TestScorePartialEnvelopeCompleteJSONStillTruncated(t *testing.T) {
 	srv := partialServer(t, `[{"title":"only","kind":"story","relevance_score":10,"primary_topic":"t","summary":"s"}]`)
 	defer srv.Close()
 
-	items, err := NewScorer(fastClient(srv), nil).Score(context.Background(), ScoreInput{Body: "b"})
+	res, err := NewScorer(fastClient(srv), nil).Score(context.Background(), ScoreInput{Body: "b"})
+	items := res.Items
 	var tr *TruncatedError
 	if !errors.As(err, &tr) {
 		t.Fatalf("err = %v, want *TruncatedError", err)

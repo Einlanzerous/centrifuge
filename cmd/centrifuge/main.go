@@ -86,6 +86,10 @@ func runServer(cfg *config.Config, logger *slog.Logger) error {
 		if cfg.OllamaNumPredict > 0 {
 			scoreOpts["num_predict"] = cfg.OllamaNumPredict // cap output → runaway truncates fast (CTFG-42)
 		}
+		if cfg.OllamaNumCtx > 0 {
+			scoreOpts["num_ctx"] = cfg.OllamaNumCtx // decouple from server ctx; 64K hurt segmentation (CTFG-62)
+		}
+		scoreOpts["use_mmap"] = cfg.OllamaUseMmap // false streams weights; mmap thrashes on RAM-starved hosts
 		scorer := ai.NewScorer(
 			ai.NewClient(cfg.OllamaURL, cfg.OllamaModel,
 				ai.WithTimeout(cfg.OllamaTimeout),
@@ -93,6 +97,8 @@ func runServer(cfg *config.Config, logger *slog.Logger) error {
 			),
 			cfg.RelevanceTopics,
 			ai.WithGenerateOptions(scoreOpts),
+			ai.WithChunkChars(cfg.ScoringChunkChars),
+			ai.WithPromptStyle(cfg.ScoringPromptStyle),
 		)
 		w := worker.New(pool, scorer,
 			worker.WithInterval(cfg.ScoringInterval),

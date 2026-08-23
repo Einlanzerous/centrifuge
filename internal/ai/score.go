@@ -60,7 +60,12 @@ func ItemsSchema() map[string]any {
 				"primary_topic":   map[string]any{"type": "string"},
 				"labels":          map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 			},
-			"required": []string{"title", "kind", "relevance_score", "primary_topic", "summary"},
+			// snippet is required (CTFG-62 M1): without it extractSegmentText
+			// cannot locate the story body and the reader renders an empty story.
+			// The grammar can only force the key present (a model may still emit
+			// ""), but presence alone measurably improves anchoring, and the
+			// worker's escalation gate catches the empty/unanchorable remainder.
+			"required": []string{"title", "snippet", "kind", "relevance_score", "primary_topic", "summary"},
 		},
 	}
 }
@@ -432,8 +437,93 @@ func sanitizeModelText(s string) string {
 	}
 	s = fillerRun.ReplaceAllString(s, " ")
 	s = collapseRepeatedWords(s)
+	s = collapseRepeatedPhrases(s)
 	s = horizWS.ReplaceAllString(s, " ")
 	return strings.TrimSpace(s)
+}
+
+// maxLoopPhraseWords bounds how long a phrase the loop collapse looks for. The
+// observed spiral repeats short clauses ("uprooting immigration enforcement
+// uprooting immigration enforcement ..."); 8 words covers those without
+// scanning quadratically far.
+const maxLoopPhraseWords = 8
+
+// collapseRepeatedPhrases drops immediately repeated multi-word phrases — the
+// phrase-level form of the temperature-0 repetition spiral (CTFG-56, observed
+// again on 2026-08-23: a 3-word clause looped 4x inside a summary). A phrase of
+// 2..maxLoopPhraseWords words repeated back-to-back with only whitespace
+// between occurrences collapses to one occurrence, applied repeatedly so an
+// N-fold loop fully unwinds. Deliberate prose repetition nearly always carries
+// punctuation between repeats ("End. End.") and is left intact.
+func collapseRepeatedPhrases(s string) string {
+	locs := wordToken.FindAllStringIndex(s, -1)
+	if len(locs) < 4 {
+		return s
+	}
+
+	// Decompose into prefix + (word, following-gap) pairs so occurrences can be
+	// deleted and the text rebuilt without index bookkeeping.
+	type tok struct {
+		word  string // original casing
+		lower string
+		gap   string // text after this word, up to the next word (or the end)
+	}
+	prefix := s[:locs[0][0]]
+	toks := make([]tok, len(locs))
+	for i, loc := range locs {
+		end := len(s)
+		if i+1 < len(locs) {
+			end = locs[i+1][0]
+		}
+		w := s[loc[0]:loc[1]]
+		toks[i] = tok{word: w, lower: strings.ToLower(w), gap: s[loc[1]:end]}
+	}
+
+	repeats := func(i, n int) bool {
+		if i+2*n > len(toks) {
+			return false
+		}
+		for k := 0; k < n; k++ {
+			if toks[i+k].lower != toks[i+n+k].lower {
+				return false
+			}
+		}
+		// Every gap inside both occurrences must be pure whitespace, so phrases
+		// separated by punctuation ("trains, trains") stay untouched.
+		for k := i; k < i+2*n-1; k++ {
+			if strings.TrimSpace(toks[k].gap) != "" {
+				return false
+			}
+		}
+		return true
+	}
+
+	for i := 0; i < len(toks); {
+		collapsed := false
+		for n := maxLoopPhraseWords; n >= 2; n-- {
+			for repeats(i, n) {
+				// Drop the second occurrence; its last word's gap survives as
+				// the connector after the kept occurrence.
+				toks[i+n-1].gap = toks[i+2*n-1].gap
+				toks = append(toks[:i+n], toks[i+2*n:]...)
+				collapsed = true
+			}
+			if collapsed {
+				break
+			}
+		}
+		if !collapsed {
+			i++
+		}
+	}
+
+	var b strings.Builder
+	b.WriteString(prefix)
+	for _, t := range toks {
+		b.WriteString(t.word)
+		b.WriteString(t.gap)
+	}
+	return b.String()
 }
 
 // collapseRepeatedWords drops an immediately repeated word ("and and" → "and"),

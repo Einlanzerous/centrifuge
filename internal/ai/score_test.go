@@ -416,3 +416,23 @@ func TestNormalizeItemBlanksLeakedTopic(t *testing.T) {
 		t.Errorf("PrimaryTopic = %q, want blank", got[0].PrimaryTopic)
 	}
 }
+
+func TestCollapseRepeatedPhrases(t *testing.T) {
+	cases := map[string]string{
+		// The observed spiral: a 3-word clause looped with whitespace gaps.
+		"a worldview uprooting immigration enforcement uprooting immigration enforcement uprooting immigration enforcement and beyond": "a worldview uprooting immigration enforcement and beyond",
+		// Two-word loop, case-insensitive.
+		"the same as The Same as the end": "the same as the end",
+		// Punctuation between repeats is deliberate and kept.
+		"never again. never again.": "never again. never again.",
+		// No repeats: untouched.
+		"plain text with no loops at all": "plain text with no loops at all",
+		// Repeat at the very end keeps trailing punctuation.
+		"costs rose and rose and rose.": "costs rose and rose.",
+	}
+	for in, want := range cases {
+		if got := collapseRepeatedPhrases(in); got != want {
+			t.Errorf("collapseRepeatedPhrases(%q)\n got  %q\n want %q", in, got, want)
+		}
+	}
+}

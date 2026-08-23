@@ -28,6 +28,7 @@ import (
 
 	"github.com/Einlanzerous/centrifuge/internal/ai"
 	"github.com/Einlanzerous/centrifuge/internal/config"
+	"github.com/Einlanzerous/centrifuge/internal/db"
 	"github.com/Einlanzerous/centrifuge/internal/ingest"
 )
 
@@ -40,6 +41,10 @@ func main() {
 	timeout := flag.Duration("timeout", config.DefaultOllamaTimeout, "per-request Ollama timeout")
 	numPredict := flag.Int("num-predict", config.DefaultOllamaNumPredict, "cap on tokens generated per call (matches prod; 0 = unbounded)")
 	temperature := flag.Float64("temperature", config.DefaultOllamaTemperature, "sampling temperature (matches prod; 0 = greedy)")
+	chunkChars := flag.Int("chunk-chars", config.DefaultScoringChunkChars, "digest chunking target in prepped chars (matches prod; 0 = score whole)")
+	numCtx := flag.Int("num-ctx", config.DefaultOllamaNumCtx, "pin options.num_ctx per request (matches prod; 0 = server default)")
+	useMmap := flag.Bool("use-mmap", config.DefaultOllamaUseMmap, "options.use_mmap (matches prod; false streams weights — mmap thrashes on RAM-starved hosts)")
+	promptStyle := flag.String("prompt-style", "auto", "scoring prompt variant: auto|standard|compact (auto matches prod: compact for glimmer)")
 	raw := flag.Bool("raw", false, "print the model's unparsed JSON response per fixture (debug)")
 	prepOnly := flag.Bool("prep-only", false, "print the prepped body the model would see and skip scoring (no Ollama needed)")
 	flag.Parse()
@@ -63,13 +68,19 @@ func main() {
 	if *numPredict > 0 {
 		scoreOpts["num_predict"] = *numPredict
 	}
+	if *numCtx > 0 {
+		scoreOpts["num_ctx"] = *numCtx
+	}
+	scoreOpts["use_mmap"] = *useMmap
 	scorer := ai.NewScorer(
 		ai.NewClient(*url, *model, ai.WithTimeout(*timeout)),
 		topics,
 		ai.WithGenerateOptions(scoreOpts),
+		ai.WithChunkChars(*chunkChars),
+		ai.WithPromptStyle(*promptStyle),
 	)
 
-	fmt.Printf("model=%s  url=%s  prompt=%s\n", *model, *url, ai.PromptVersion)
+	fmt.Printf("model=%s  url=%s  prompt=%s\n", *model, *url, scorer.PromptVersion())
 	fmt.Printf("topics=[%s]\n\n", strings.Join(topics, ", "))
 
 	ctx := context.Background()
@@ -133,8 +144,9 @@ func scoreFixture(ctx context.Context, scorer *ai.Scorer, path string, maxChars 
 	}
 
 	start := time.Now()
-	items, err := scorer.Score(ctx, in)
+	res, err := scorer.Score(ctx, in)
 	elapsed := time.Since(start).Round(time.Millisecond)
+	items := res.Items
 	// A truncated or empty response is not a hard failure: truncation salvages
 	// the complete leading items, and an empty "[]" (CTFG-59) is a model-quality
 	// signal worth seeing — so note them rather than aborting the fixture,
@@ -145,16 +157,31 @@ func scoreFixture(ctx context.Context, scorer *ai.Scorer, path string, maxChars 
 		return err
 	}
 
-	fmt.Printf("fixture: %s  (%s, %d prepped chars, %s)\n", name, kind, len([]rune(body)), elapsed)
+	// The anchoring metric: does each snippet locate its story with the exact
+	// matcher the reader slices segments with? HTML fixtures anchor against the
+	// reader's real rendering of the raw HTML; text fixtures approximate with
+	// the prepped body (their raw HTML wasn't kept).
+	anchorText := body
+	if kind == "html" {
+		anchorText = db.SegmentSourceText(string(content))
+	}
+
+	shape := string(res.Shape)
+	if shape == "" {
+		shape = "unprobed"
+	}
+	fmt.Printf("fixture: %s  (%s, %d prepped chars, shape=%s, chunks=%d, %s)\n",
+		name, kind, len([]rune(body)), shape, res.Chunks, elapsed)
 	if truncated != nil {
-		fmt.Printf("  ⚠ TRUNCATED model output — salvaged %d complete item(s)\n", truncated.Recovered)
+		fmt.Printf("  ⚠ TRUNCATED model output — salvaged %d complete item(s) (%s)\n", truncated.Recovered, truncated.Reason)
 	}
 	if empty != nil {
 		fmt.Printf("  ⚠ EMPTY model output — model segmented nothing ([])\n")
 	}
 	fmt.Printf("  items: %d  (%s)\n", len(items), kindBreakdown(items))
 	for i, it := range items {
-		fmt.Printf("  [%d] %-6s score=%-3d topic=%q labels=%v\n", i, it.Kind, it.RelevanceScore, it.PrimaryTopic, it.Labels)
+		fmt.Printf("  [%d] %-6s score=%-3d snippet=%s topic=%q labels=%v\n",
+			i, it.Kind, it.RelevanceScore, snippetStatus(anchorText, it.Snippet), it.PrimaryTopic, it.Labels)
 		if it.Title != "" {
 			fmt.Printf("      title:   %s\n", oneline(it.Title))
 		}
@@ -167,6 +194,19 @@ func scoreFixture(ctx context.Context, scorer *ai.Scorer, path string, maxChars 
 	}
 	fmt.Println()
 	return nil
+}
+
+// snippetStatus classifies one item's snippet for the eval readout: missing,
+// anchored (the reader's segment matcher will find it), or unanchored.
+func snippetStatus(anchorText, snippet string) string {
+	switch {
+	case snippet == "":
+		return "MISSING"
+	case db.SnippetAnchors(anchorText, snippet):
+		return "anchored"
+	default:
+		return "UNANCHORED"
+	}
 }
 
 // prep turns raw fixture bytes into model-ready body text, mirroring the

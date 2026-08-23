@@ -138,7 +138,8 @@ func TestPromptEval(t *testing.T) {
 		// Per-case deadline so one stuck generation cannot consume the whole run.
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 		start := time.Now()
-		items, err := scorer.Score(ctx, in)
+		res, err := scorer.Score(ctx, in)
+		items := res.Items
 		cancel()
 		dur := time.Since(start).Round(time.Second)
 		// A TruncatedError still returns the salvaged leading items — and at

@@ -9,7 +9,7 @@ import (
 // prompt_version) so results are attributable to the exact instructions that
 // produced them. Bump it whenever the prompt text or the expected output
 // contract below changes — the eval harness (CTFG-23) diffs across versions.
-const PromptVersion = "2026-06-13.2"
+const PromptVersion = "2026-08-23.1"
 
 // PromptInput is everything the prompt builder needs about one newsletter. The
 // caller derives Body from the cleaned, truncated text (Phase 2) so the model's
@@ -70,19 +70,15 @@ Score every item, but only "story" items need a real summary.
 Reader focus topics seed primary_topic, but you MAY mint a new short label when
 none fits well. primary_topic is exactly ONE label; labels is 0-5 secondary tags.
 
-Return ONLY a JSON array (no prose, no markdown fences). Each element:
-{
-  "title": "short item title",
-  "snippet": "the lead sentence of the item's actual body (NOT the email's preview/teaser line)",
-  "kind": "story|blurb|ad|promo",
-  "section": "the publication's section heading for this item if any, else omit",
-  "summary": "2-3 sentence neutral summary (stories only; else empty)",
-  "relevance_score": 0,
-  "primary_topic": "one label",
-  "labels": ["secondary", "tags"]
-}
+Return ONLY a JSON array with one element per item (no prose, no markdown
+fences). Describe each item with: a short title; a snippet quoting the lead
+sentence of the item's actual body (never the email's preview/teaser line); its
+kind; the publication's section heading for the item, omitted when there is
+none; a 2-3 sentence neutral summary for stories (empty for everything else);
+an integer relevance_score from 0 to 100; exactly one primary_topic label; and
+0-5 secondary labels.
 
-If the newsletter is empty or unintelligible, return [].
+If the newsletter is empty or unintelligible, return an empty array.
 
 `)
 	fmt.Fprintf(&b, "SOURCE: %s\n", strings.TrimSpace(in.SourceName))

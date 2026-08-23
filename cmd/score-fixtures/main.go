@@ -43,6 +43,7 @@ func main() {
 	temperature := flag.Float64("temperature", config.DefaultOllamaTemperature, "sampling temperature (matches prod; 0 = greedy)")
 	chunkChars := flag.Int("chunk-chars", config.DefaultScoringChunkChars, "digest chunking target in prepped chars (matches prod; 0 = score whole)")
 	numCtx := flag.Int("num-ctx", config.DefaultOllamaNumCtx, "pin options.num_ctx per request (matches prod; 0 = server default)")
+	useMmap := flag.Bool("use-mmap", config.DefaultOllamaUseMmap, "options.use_mmap (matches prod; false streams weights — mmap thrashes on RAM-starved hosts)")
 	raw := flag.Bool("raw", false, "print the model's unparsed JSON response per fixture (debug)")
 	prepOnly := flag.Bool("prep-only", false, "print the prepped body the model would see and skip scoring (no Ollama needed)")
 	flag.Parse()
@@ -69,6 +70,7 @@ func main() {
 	if *numCtx > 0 {
 		scoreOpts["num_ctx"] = *numCtx
 	}
+	scoreOpts["use_mmap"] = *useMmap
 	scorer := ai.NewScorer(
 		ai.NewClient(*url, *model, ai.WithTimeout(*timeout)),
 		topics,

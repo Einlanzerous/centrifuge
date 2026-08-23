@@ -18,9 +18,13 @@ services:
       - OLLAMA_MODEL=${OLLAMA_MODEL:-gemma4:31b}
       # Scoring tuning (defaults compiled in; here for visibility/override).
       # OLLAMA_NUM_CTX pins the per-request context window; SCORING_CHUNK_CHARS
-      # is the digest chunking target, 0 disables chunking (CTFG-62).
+      # is the digest chunking target, 0 disables chunking; OLLAMA_USE_MMAP=true
+      # restores mmap loads on hosts with RAM to spare; SCORING_PROMPT_STYLE
+      # selects the prompt variant (CTFG-62).
       - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-16384}
       - SCORING_CHUNK_CHARS=${SCORING_CHUNK_CHARS:-5000}
+      - OLLAMA_USE_MMAP=${OLLAMA_USE_MMAP:-false}
+      - SCORING_PROMPT_STYLE=${SCORING_PROMPT_STYLE:-auto}
       - INGEST_TOKEN=${INGEST_TOKEN}
       - RELEVANCE_TOPICS=${RELEVANCE_TOPICS:-AI engineering,urbanism,transit/trains,nuclear,tech,video games}
       - LOG_LEVEL=${LOG_LEVEL:-info}

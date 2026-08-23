@@ -114,3 +114,26 @@ func TestParseShape(t *testing.T) {
 		}
 	}
 }
+
+func TestMergeChunkItemsGapBreaksAdjacency(t *testing.T) {
+	// A whole chunk of text sits between the two same-titled items (the middle
+	// chunk contributed nothing), so they cannot be halves of one story.
+	perChunk := [][]ScoredItem{
+		{{Title: "Presented by X", Kind: KindAd}},
+		nil,
+		{{Title: "Presented by X", Kind: KindAd}},
+	}
+	got := mergeChunkItems(perChunk)
+	if len(got) != 2 {
+		t.Fatalf("items = %d, want 2 (gap chunk breaks boundary adjacency)", len(got))
+	}
+}
+
+func TestMergeSplitStoryBackfillsSnippet(t *testing.T) {
+	a := ScoredItem{Title: "Split", Kind: KindStory, Snippet: ""}
+	b := ScoredItem{Title: "split", Kind: KindStory, Snippet: "the real anchor", Summary: "s"}
+	m := mergeSplitStory(a, b)
+	if m.Snippet != "the real anchor" {
+		t.Errorf("snippet = %q, want backfilled from the continuation half", m.Snippet)
+	}
+}

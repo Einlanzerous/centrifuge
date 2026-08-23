@@ -24,6 +24,15 @@ type ScoreResult struct {
 	Shape Shape
 	// Chunks is how many scoring calls the body was split across (1 = whole).
 	Chunks int
+	// EmptyChunks counts chunks that returned a well-formed empty array. One
+	// can be legitimate (pure boilerplate); the gate still records it, because
+	// a deterministic per-chunk "[]" is how a third of a newsletter silently
+	// vanishes (the CTFG-59 failure, per-chunk).
+	EmptyChunks int
+	// FailedChunks counts chunks whose response was terminal junk (decode or
+	// validation failure). Their content is lost; the sibling chunks' items
+	// are kept and the loss is surfaced through the truncation path.
+	FailedChunks int
 }
 
 // Scorer segments and scores one newsletter end to end: build the prompt, call
@@ -38,8 +47,8 @@ type Scorer struct {
 	options    map[string]any
 	chunkChars int
 	// promptStyle selects the scoring prompt: "standard" (BuildPrompt),
-	// "compact" (BuildPromptCompact), or "" / "auto" — pick by model family
-	// (glimmer's segmentation collapses under instruction bulk, CTFG-61).
+	// "compact" (BuildPromptCompact, an experiment knob), or "" / "auto"
+	// (identical to standard for every model — see compact()).
 	promptStyle string
 }
 
@@ -131,40 +140,63 @@ func (s *Scorer) Score(ctx context.Context, in ScoreInput) (ScoreResult, error) 
 	}
 
 	chunks := splitChunks(in.Body, s.chunkChars)
-	perChunk := make([][]ScoredItem, 0, len(chunks))
-	var truncatedChunks, emptyChunks int
+	perChunk := make([][]ScoredItem, len(chunks)) // index-aligned; nil = contributed nothing
+	var truncatedChunks, emptyChunks, failedChunks int
 	var firstReason string
-	for _, c := range chunks {
+	note := func(reason string) {
+		if firstReason == "" {
+			firstReason = reason
+		}
+	}
+	for i, c := range chunks {
 		items, err := s.scoreOnce(ctx, ScoreInput{SourceName: in.SourceName, Subject: in.Subject, Body: c})
 		if err != nil {
 			var tr *TruncatedError
 			var ee *EmptyError
+			var te *TransportError
 			switch {
 			case errors.As(err, &tr):
 				// Keep what the chunk salvaged and keep going — the other chunks
 				// are independent generations.
 				truncatedChunks++
-				if firstReason == "" {
-					firstReason = tr.Error()
+				if tr.Reason != "" {
+					note(tr.Reason)
+				} else {
+					note("cut-off array")
 				}
-				perChunk = append(perChunk, items)
+				perChunk[i] = items
 			case errors.As(err, &ee):
 				// A chunk of pure boilerplate (footer, referral block) can be
-				// legitimately empty; only all-empty is a newsletter-level empty.
+				// legitimately empty; only all-empty is a newsletter-level empty,
+				// but the count is surfaced so the gate can record a partial one.
 				emptyChunks++
-			default:
+			case errors.As(err, &te):
+				// The model is down or slow — nothing model-quality about it, so
+				// abort and let the worker requeue the whole newsletter.
 				return ScoreResult{Shape: shape, Chunks: len(chunks)}, err
+			default:
+				// Terminal junk from ONE chunk (decode/validation) must not sink
+				// the sibling chunks' items — mirror ParseItems' per-item
+				// tolerance and surface the loss through the truncation path.
+				failedChunks++
+				note(err.Error())
 			}
 			continue
 		}
-		perChunk = append(perChunk, items)
+		perChunk[i] = items
 	}
 
-	res := ScoreResult{Items: mergeChunkItems(perChunk), Shape: shape, Chunks: len(chunks)}
-	if truncatedChunks > 0 {
+	res := ScoreResult{
+		Items:        mergeChunkItems(perChunk),
+		Shape:        shape,
+		Chunks:       len(chunks),
+		EmptyChunks:  emptyChunks,
+		FailedChunks: failedChunks,
+	}
+	if lost := truncatedChunks + failedChunks; lost > 0 {
 		return res, &TruncatedError{
 			Recovered: len(res.Items),
-			Reason:    fmt.Sprintf("%d of %d chunk(s) truncated; first: %s", truncatedChunks, len(chunks), firstReason),
+			Reason:    fmt.Sprintf("%d of %d chunk(s) truncated or failed (first: %s)", lost, len(chunks), firstReason),
 		}
 	}
 	if emptyChunks == len(chunks) {

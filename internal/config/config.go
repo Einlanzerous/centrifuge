@@ -145,9 +145,9 @@ type Config struct {
 	// in chunks; <= 0 disables chunking.
 	ScoringChunkChars int
 
-	// ScoringPromptStyle forces the scoring prompt variant: "standard",
-	// "compact", or "auto" (default — per model family; glimmer's segmentation
-	// collapses under instruction bulk, CTFG-61).
+	// ScoringPromptStyle selects the scoring prompt variant: "standard",
+	// "compact" (an experiment knob — it did not rescue glimmer, CTFG-61), or
+	// "auto" (default; currently identical to standard for every model).
 	ScoringPromptStyle string
 
 	// CORSAllowOrigin is the Access-Control-Allow-Origin served by the read API
@@ -328,6 +328,22 @@ func Load() (*Config, error) {
 func (c *Config) validate() error {
 	if c.DatabaseURL == "" {
 		return fmt.Errorf("config: DATABASE_URL is required")
+	}
+	// A context window at or under the generation cap can overflow mid-call on
+	// any real prompt — reject the combination outright rather than let every
+	// scoring call silently context-shift into degraded output.
+	if c.OllamaNumCtx > 0 && c.OllamaNumPredict > 0 && c.OllamaNumCtx <= c.OllamaNumPredict {
+		return fmt.Errorf("config: OLLAMA_NUM_CTX (%d) must exceed OLLAMA_NUM_PREDICT (%d)", c.OllamaNumCtx, c.OllamaNumPredict)
+	}
+	// Absurdly small chunks fan one newsletter into hundreds of generations;
+	// 0 (disabled) is the supported way to opt out of chunking.
+	if c.ScoringChunkChars > 0 && c.ScoringChunkChars < 500 {
+		return fmt.Errorf("config: SCORING_CHUNK_CHARS must be 0 (disabled) or >= 500, got %d", c.ScoringChunkChars)
+	}
+	switch c.ScoringPromptStyle {
+	case "auto", "standard", "compact":
+	default:
+		return fmt.Errorf("config: SCORING_PROMPT_STYLE must be auto|standard|compact, got %q", c.ScoringPromptStyle)
 	}
 	return nil
 }

@@ -94,6 +94,11 @@ func TestPromptEval(t *testing.T) {
 	if numPredict > 0 {
 		genOpts["num_predict"] = numPredict
 	}
+	// Match prod's runner config (CTFG-62): pinned context and streamed (non-
+	// mmap) loads. Chunking also applies via the scorer's default, so per-case
+	// item ranges calibrated on whole-body scoring may need recalibration.
+	genOpts["num_ctx"] = 16384
+	genOpts["use_mmap"] = false
 	scorer := NewScorer(
 		NewClient(ollamaURL, model, WithTimeout(8*time.Minute), WithMaxRetries(0)),
 		topics,
@@ -136,7 +141,7 @@ func TestPromptEval(t *testing.T) {
 		}
 
 		// Per-case deadline so one stuck generation cannot consume the whole run.
-		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 		start := time.Now()
 		res, err := scorer.Score(ctx, in)
 		items := res.Items

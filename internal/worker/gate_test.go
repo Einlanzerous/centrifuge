@@ -102,3 +102,37 @@ func TestGateTruncationRecorded(t *testing.T) {
 		t.Errorf("findings = %v, want truncated", got)
 	}
 }
+
+func TestGateUnknownShapeNeverCollapseFlagged(t *testing.T) {
+	// Without an affirmative digest probe (chunking disabled, short body, or an
+	// unusable probe answer) a lone item carries no collapse evidence — a long
+	// single-story essay scored whole must not be flagged on every clean pass.
+	big := strings.Repeat("word ", 2000)
+	one := []ai.ScoredItem{{Title: "Essay", Kind: ai.KindStory, Summary: "s", Snippet: "x"}}
+	got := gateFindings(nlWith(big, ""), ai.ScoreResult{Items: one, Shape: ai.ShapeUnknown, Chunks: 1}, nil)
+	if hasFinding(got, "silent_collapse") {
+		t.Errorf("findings = %v: unprobed shape must not trip silent_collapse", got)
+	}
+}
+
+func TestGatePartialEmptyChunksRecorded(t *testing.T) {
+	items := []ai.ScoredItem{{Title: "A", Kind: ai.KindStory, Summary: "s"}}
+	got := gateFindings(nlWith("body", ""), ai.ScoreResult{Items: items, Shape: ai.ShapeDigest, Chunks: 3, EmptyChunks: 1}, nil)
+	if !hasFinding(got, "empty_chunks") {
+		t.Errorf("findings = %v, want empty_chunks for a partial [] chunk", got)
+	}
+}
+
+func TestGateNonStorySnippetsChecked(t *testing.T) {
+	// The reader bounds story segments on ALL sibling snippets, so an ad with
+	// no snippet bleeds into its neighbor — flag it like any other.
+	rawHTML := "<html><body><p>Story one begins here with a full and proper opening sentence.</p><p>Sponsored content follows.</p></body></html>"
+	items := []ai.ScoredItem{
+		{Title: "A", Kind: ai.KindStory, Summary: "s", Snippet: "Story one begins here with a full and proper opening sentence."},
+		{Title: "Sponsor", Kind: ai.KindAd, Snippet: ""},
+	}
+	got := gateFindings(nlWith("body", rawHTML), ai.ScoreResult{Items: items, Chunks: 1}, nil)
+	if !hasFinding(got, "missing_snippet: ad 1") {
+		t.Errorf("findings = %v, want missing_snippet for the ad", got)
+	}
+}

@@ -27,7 +27,7 @@ func TestPersistRecordsAndClearsGateFindings(t *testing.T) {
 	// trips silent_collapse and empty_summary.
 	nl := seedPending(t, pool, "Digest", strings.Repeat("word ", 2000))
 
-	scorer := &stubScorer{items: []ai.ScoredItem{
+	scorer := &stubScorer{shape: ai.ShapeDigest, items: []ai.ScoredItem{
 		{Title: "Dump", Snippet: "word word", Kind: ai.KindStory, RelevanceScore: 5},
 	}}
 	if err := quietWorker(pool, scorer).processOne(ctx, nl); err != nil {

@@ -89,6 +89,7 @@ func runServer(cfg *config.Config, logger *slog.Logger) error {
 		if cfg.OllamaNumCtx > 0 {
 			scoreOpts["num_ctx"] = cfg.OllamaNumCtx // decouple from server ctx; 64K hurt segmentation (CTFG-62)
 		}
+		scoreOpts["use_mmap"] = cfg.OllamaUseMmap // false streams weights; mmap thrashes on RAM-starved hosts
 		scorer := ai.NewScorer(
 			ai.NewClient(cfg.OllamaURL, cfg.OllamaModel,
 				ai.WithTimeout(cfg.OllamaTimeout),

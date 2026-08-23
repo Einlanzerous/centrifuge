@@ -36,6 +36,13 @@ const (
 	// covers the worst case comfortably: a 24k-char whole-essay body ≈ 7k
 	// tokens + prompt + 6144 output tokens. <= 0 leaves the server default.
 	DefaultOllamaNumCtx = 16384
+	// DefaultOllamaUseMmap controls options.use_mmap on scoring calls. Off by
+	// default: the deployment box's RAM is smaller than the model file, and an
+	// mmap'd load page-thrashes for 15+ minutes (observed 2026-08-23 —
+	// re-reading ~90 GB for a 19 GB model) where a no-mmap streaming load
+	// finishes in under a minute. Set OLLAMA_USE_MMAP=true on hosts with RAM
+	// to spare.
+	DefaultOllamaUseMmap = false
 	// DefaultScoringChunkChars is the digest chunking target fed to the scorer
 	// (ai.WithChunkChars): bodies over it are shape-probed and, when
 	// digest-shaped, scored in ~this-many-rune chunks (CTFG-62). Both local
@@ -97,6 +104,11 @@ type Config struct {
 	// (server default applies).
 	OllamaNumCtx int
 
+	// OllamaUseMmap is passed as options.use_mmap on every scoring call. False
+	// (the default) streams weights instead of mmap'ing them — see
+	// DefaultOllamaUseMmap for why.
+	OllamaUseMmap bool
+
 	// IngestToken authenticates inbound ingestion requests.
 	IngestToken string
 
@@ -157,6 +169,7 @@ func Load() (*Config, error) {
 		OllamaNumPredict:   DefaultOllamaNumPredict,
 		OllamaTemperature:  DefaultOllamaTemperature,
 		OllamaNumCtx:       DefaultOllamaNumCtx,
+		OllamaUseMmap:      DefaultOllamaUseMmap,
 		IngestToken:        os.Getenv("INGEST_TOKEN"),
 		IngestMaxChars:     DefaultIngestMaxChars,
 		Port:               DefaultPort,
@@ -273,6 +286,14 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("config: SCORING_MAX_ATTEMPTS must be >= 1, got %d", n)
 		}
 		cfg.ScoringMaxAttempts = n
+	}
+
+	if v := os.Getenv("OLLAMA_USE_MMAP"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("config: invalid OLLAMA_USE_MMAP %q: %w", v, err)
+		}
+		cfg.OllamaUseMmap = b
 	}
 
 	if v := os.Getenv("OLLAMA_NUM_CTX"); v != "" {

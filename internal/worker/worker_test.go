@@ -21,9 +21,9 @@ type stubScorer struct {
 	deterministic bool
 }
 
-func (s *stubScorer) Score(_ context.Context, _ ai.ScoreInput) ([]ai.ScoredItem, error) {
+func (s *stubScorer) Score(_ context.Context, _ ai.ScoreInput) (ai.ScoreResult, error) {
 	s.calls++
-	return s.items, s.err
+	return ai.ScoreResult{Items: s.items, Chunks: 1}, s.err
 }
 
 func (s *stubScorer) Model() string { return "stub-model" }

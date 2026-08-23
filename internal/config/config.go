@@ -28,6 +28,12 @@ const (
 	// (~30 items) while keeping the worst case (~280s at 22 tok/s) well under
 	// OLLAMA_TIMEOUT_SECONDS — keep that ordering when tuning either value.
 	DefaultOllamaNumPredict = 6144
+	// DefaultScoringChunkChars is the digest chunking target fed to the scorer
+	// (ai.WithChunkChars): bodies over it are shape-probed and, when
+	// digest-shaped, scored in ~this-many-rune chunks (CTFG-62). Both local
+	// models segment reliably at ~5k prepped chars and degrade beyond it. 0
+	// disables chunking.
+	DefaultScoringChunkChars = 5000
 	// DefaultOllamaTemperature pins sampling to greedy decoding for reproducible
 	// output (it matches the score-fixtures eval gate). Temperature is NOT a lever
 	// against the repetition spiral: at ~0.8 gemma4:31b spirals occasionally, at 0
@@ -109,6 +115,11 @@ type Config struct {
 	// or marks it failed (CTFG-33).
 	ScoringMaxAttempts int
 
+	// ScoringChunkChars is the digest chunking target in prepped-body runes
+	// (CTFG-62). Bodies over it are shape-probed and digest-shaped ones scored
+	// in chunks; <= 0 disables chunking.
+	ScoringChunkChars int
+
 	// CORSAllowOrigin is the Access-Control-Allow-Origin served by the read API
 	// for the browser frontend. Defaults to "*" (the API carries no
 	// credentials). Set to a specific origin to lock it down.
@@ -141,6 +152,7 @@ func Load() (*Config, error) {
 		ScoringInterval:    DefaultScoringInterval,
 		ScoringBatch:       DefaultScoringBatch,
 		ScoringMaxAttempts: DefaultScoringMaxAttempts,
+		ScoringChunkChars:  DefaultScoringChunkChars,
 		CORSAllowOrigin:    getEnvDefault("CORS_ALLOW_ORIGIN", "*"),
 		PublicBaseURL:      strings.TrimRight(os.Getenv("PUBLIC_BASE_URL"), "/"),
 	}
@@ -247,6 +259,14 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("config: SCORING_MAX_ATTEMPTS must be >= 1, got %d", n)
 		}
 		cfg.ScoringMaxAttempts = n
+	}
+
+	if v := os.Getenv("SCORING_CHUNK_CHARS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("config: invalid SCORING_CHUNK_CHARS %q: %w", v, err)
+		}
+		cfg.ScoringChunkChars = n
 	}
 
 	if err := cfg.validate(); err != nil {

@@ -31,7 +31,7 @@ const (
 // Scorer is the model seam the worker depends on. *ai.Scorer satisfies it; tests
 // supply a stub so they need no live model.
 type Scorer interface {
-	Score(ctx context.Context, in ai.ScoreInput) ([]ai.ScoredItem, error)
+	Score(ctx context.Context, in ai.ScoreInput) (ai.ScoreResult, error)
 	Model() string
 	// Deterministic reports whether scoring samples greedily (temperature 0), so
 	// retrying a truncated response would reproduce the identical output. When
@@ -177,11 +177,11 @@ func (w *Worker) processOne(ctx context.Context, nl db.Newsletter) error {
 		return db.NewNewsletterRepo(w.pool).UpdateStatus(ctx, nl.ID, db.StatusScored)
 	}
 
-	items, err := w.scorer.Score(ctx, in)
+	res, err := w.scorer.Score(ctx, in)
 	if err != nil {
-		return w.handleScoreError(ctx, nl, items, err)
+		return w.handleScoreError(ctx, nl, res, err)
 	}
-	return w.persist(ctx, nl, items)
+	return w.persist(ctx, nl, res, nil)
 }
 
 // handleScoreError decides what to do when scoring returns an error, so a
@@ -193,9 +193,9 @@ func (w *Worker) processOne(ctx context.Context, nl db.Newsletter) error {
 //     persist whatever items were salvaged, or mark failed if none survived.
 //   - Anything else (structural/validation error): terminal, mark failed.
 //
-// items carries any partial results the scorer salvaged from a truncated
+// res carries any partial results the scorer salvaged from a truncated
 // response.
-func (w *Worker) handleScoreError(ctx context.Context, nl db.Newsletter, items []ai.ScoredItem, scoreErr error) error {
+func (w *Worker) handleScoreError(ctx context.Context, nl db.Newsletter, res ai.ScoreResult, scoreErr error) error {
 	repo := db.NewNewsletterRepo(w.pool)
 
 	var te *ai.TransportError
@@ -215,10 +215,10 @@ func (w *Worker) handleScoreError(ctx context.Context, nl db.Newsletter, items [
 				"newsletter", nl.ID, "attempt", nl.ScoringAttempts, "max", w.maxAttempts, "recovered", tr.Recovered)
 			return repo.Requeue(ctx, nl.ID)
 		}
-		if len(items) > 0 {
+		if len(res.Items) > 0 {
 			w.logger.Warn("scoring truncated; persisting salvaged items",
-				"newsletter", nl.ID, "attempts", nl.ScoringAttempts, "recovered", len(items), "deterministic", w.scorer.Deterministic())
-			return w.persist(ctx, nl, items)
+				"newsletter", nl.ID, "attempts", nl.ScoringAttempts, "recovered", len(res.Items), "deterministic", w.scorer.Deterministic())
+			return w.persist(ctx, nl, res, scoreErr)
 		}
 		w.logger.Error("scoring truncated with nothing salvageable; marking failed",
 			"newsletter", nl.ID, "attempts", nl.ScoringAttempts, "deterministic", w.scorer.Deterministic())
@@ -253,12 +253,24 @@ func (w *Worker) handleScoreError(ctx context.Context, nl db.Newsletter, items [
 // stories behind a still-scoring newsletter. Only story-kind items get their
 // scoring fields written; ads/blurbs/promos are persisted unscored.
 //
+// scoreErr is the truncation the caller is salvaging from (nil on a clean
+// score); it feeds the escalation gate, whose findings are recorded on the
+// newsletter alongside the stories (CTFG-62).
+//
 // (Re)scoring is idempotent (CTFG-40): any existing stories for the newsletter
 // are deleted first so a re-score REPLACES them rather than appending
 // duplicates. Reader engagement (bookmark / rating / opened) is carried over
 // best-effort, matched by URL — stories without a URL can't be matched and
 // reset, since re-segmentation gives them no stable identity.
-func (w *Worker) persist(ctx context.Context, nl db.Newsletter, items []ai.ScoredItem) error {
+func (w *Worker) persist(ctx context.Context, nl db.Newsletter, res ai.ScoreResult, scoreErr error) error {
+	items := res.Items
+
+	findings := gateFindings(nl, res, scoreErr)
+	if len(findings) > 0 {
+		w.logger.Warn("escalation gate tripped; persisting flagged",
+			"newsletter", nl.ID, "shape", string(res.Shape), "chunks", res.Chunks, "findings", findings)
+	}
+
 	tx, err := w.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -276,6 +288,10 @@ func (w *Worker) persist(ctx context.Context, nl db.Newsletter, items []ai.Score
 	}
 	priorEng := engagementByURL(prior)
 	if _, err := stories.DeleteByNewsletter(ctx, nl.ID); err != nil {
+		return err
+	}
+
+	if err := newsletters.SetGateFindings(ctx, nl.ID, findings); err != nil {
 		return err
 	}
 

@@ -14,6 +14,7 @@ import (
 
 	"github.com/Einlanzerous/centrifuge/internal/config"
 	"github.com/Einlanzerous/centrifuge/internal/ingest"
+	"github.com/Einlanzerous/centrifuge/internal/version"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -76,8 +77,59 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.handler.ServeHTTP(w, r)
 }
 
-func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+// healthzResponse is the body of `GET /healthz`.
+//
+// ── Why this grew a version and a sha (CTFG-64) ────────────────────────────
+//
+// Switchyard's delivery reconciler polls this endpoint and records what is
+// actually running, which is the observed half of the estate's delivery ledger
+// (SWY-192 defines the contract; SERV-128 owns the rollout across services).
+// Before these two fields centrifuge probed as `no_version`: reachable and
+// speaking, but unable to say WHICH build was speaking — so no deploy of
+// centrifuge could ever be corroborated.
+//
+// The field names and types are the contract, not a local choice:
+//
+//	version  bare semver ("1.5.8") or the literal "dev". Never a "v" prefix —
+//	         it is compared with strict equality against the image's
+//	         org.opencontainers.image.version label, which docker's
+//	         metadata-action stamps bare. A prefix here files every deploy
+//	         report as `claimed_not_confirmed`, permanently.
+//	sha      the full 40-char commit, or JSON null. Never abbreviated: the
+//	         cross-service comparison is an equality test, not a prefix match.
+//
+// A struct rather than the previous map[string]string, because `sha` has to be
+// able to marshal as null and a map of strings cannot express that.
+//
+// This body also covers `centrifuge-frontend`, which is a static bundle and
+// cannot answer a probe at all (tier B). It ships from this same release and
+// pins to the same tag, so the backend's row already says what release the
+// pair is on — a separate row for the frontend would measure nothing new.
+type healthzResponse struct {
+	Status  string  `json:"status"`
+	Version string  `json:"version"`
+	SHA     *string `json:"sha"`
+}
+
+// handleHealthz answers the liveness probe and the build-identity contract.
+//
+// Deliberately consults neither Postgres nor Ollama. Liveness and readiness
+// answer different questions, and a liveness probe that fails on a degraded
+// dependency gets the container killed and restarted at exactly the moment
+// somebody wants to look at it.
+//
+// That is also why there is only a 200 path here rather than the 200/503 pair
+// the contract permits. The contract's rule is that a 503 must carry the SAME
+// body shape — a degraded service is still running a version, and it is the one
+// most worth identifying — so if a readiness verdict is ever added it belongs
+// in this struct on both branches, not in a second shape.
+func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
+	id := version.Get()
+	writeJSON(w, http.StatusOK, healthzResponse{
+		Status:  "ok",
+		Version: id.Version,
+		SHA:     id.SHA,
+	})
 }
 
 // requireIngestToken guards ingestion endpoints with the shared INGEST_TOKEN.

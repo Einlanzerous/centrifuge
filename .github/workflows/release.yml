@@ -62,6 +62,20 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # Build identity for /healthz (CTFG-64) — see Dockerfile.
+          #
+          # This job only runs when release-please actually cut a release
+          # (`if: release_created` on the job), so there is no main-build path
+          # here that could leak a `latest` into the version the way a
+          # tag-triggered publish workflow can. `version` is release-please's
+          # own output and is already BARE semver — no "v" prefix — which is
+          # what makes it match org.opencontainers.image.version character for
+          # character. That agreement is the whole point: the reconciler
+          # observes this string and the deploy reporter reports the label, and
+          # the matrix compares the two as identities.
+          build-args: |
+            VERSION=${{ needs.release-please.outputs.version }}
+            GIT_SHA=${{ github.sha }}
 
       - name: Extract frontend image metadata
         id: meta-web

@@ -86,12 +86,36 @@ gemma. Speed is not worth a reader that misses 6 of 7 items.
 - CTFG-56 extension: n-gram phrase-loop collapse in the sanitizer.
 - Per-model prompt-style seam (auto/standard/compact).
 
+## E2E: 61 real newsletters, gemma + full scaffolding (appended same night)
+
+61 fresh newsletters pulled from the live Gmail inbox (Aug 17-22: TLDR ×19,
+HCR ×11, Morning Brew ×5, 1440 ×5, ByteByteGo, IT Brew, and 7 more sources)
+were ingested into a clean local instance and scored by the worker
+end-to-end (v1.6.0 code, gemma4:31b, ~2 min/newsletter):
+
+- **61/61 scored, 0 failed.**
+- **692 items, 231 stories** — 11.3 items/newsletter (old live baseline:
+  41 stories from 17 newsletters, 7 of them whole-newsletter dumps).
+- **Zero silent collapses.** Every 1-item newsletter (6) was a genuine
+  essay, probe-confirmed. The class-A dump did not occur once.
+- Per-source segmentation is shape-correct: Morning Brew 18-43 items,
+  1440 9-41, TLDR 4-28, HCR essays 1-6.
+- Residual quality tail, all mechanically flagged: 22 stories (9.5%)
+  without summaries, 8 items without snippets, 22 unanchored snippets,
+  23 truncation events (mostly Ollama 0.32.14 done:false cuts, all
+  salvaged with attribution). **32 of 61 newsletters carry ≥1 gate
+  finding** — that is the escalation executor's queue (CTFG-65), and the
+  measured case for building it.
+
+Verdict: the scaffolding did what CTFG-61 predicted. The reader is usable
+on local-only inference today; the flagged tail is the remaining gap
+between usable and good, and it is now enumerable instead of invisible.
+
 ## Next
 
-1. Full e2e over 61 real newsletters (ingested from Gmail tonight) with
-   gemma + scaffolding — results to be appended to CTFG-62.
-2. Escalation executor (frontier model on gate trip) — the gate already
-   records candidates; the executor is the remaining M3 piece.
+1. ~~Full e2e over 61 real newsletters~~ — done, above.
+2. Escalation executor (CTFG-65) — the gate records candidates; nothing
+   re-scores them yet. 32/61 flagged says this is the next lever.
 3. If glimmer is ever revisited: the experiment is prompt-shape search under
    `SCORING_PROMPT_STYLE=compact`-style variants, gated on example_digest ≥5
    items. Do not retry config-level levers; they are exhausted.

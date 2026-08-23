@@ -60,7 +60,12 @@ func ItemsSchema() map[string]any {
 				"primary_topic":   map[string]any{"type": "string"},
 				"labels":          map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 			},
-			"required": []string{"title", "kind", "relevance_score", "primary_topic", "summary"},
+			// snippet is required (CTFG-62 M1): without it extractSegmentText
+			// cannot locate the story body and the reader renders an empty story.
+			// The grammar can only force the key present (a model may still emit
+			// ""), but presence alone measurably improves anchoring, and the
+			// worker's escalation gate catches the empty/unanchorable remainder.
+			"required": []string{"title", "snippet", "kind", "relevance_score", "primary_topic", "summary"},
 		},
 	}
 }

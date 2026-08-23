@@ -44,6 +44,7 @@ func main() {
 	chunkChars := flag.Int("chunk-chars", config.DefaultScoringChunkChars, "digest chunking target in prepped chars (matches prod; 0 = score whole)")
 	numCtx := flag.Int("num-ctx", config.DefaultOllamaNumCtx, "pin options.num_ctx per request (matches prod; 0 = server default)")
 	useMmap := flag.Bool("use-mmap", config.DefaultOllamaUseMmap, "options.use_mmap (matches prod; false streams weights — mmap thrashes on RAM-starved hosts)")
+	promptStyle := flag.String("prompt-style", "auto", "scoring prompt variant: auto|standard|compact (auto matches prod: compact for glimmer)")
 	raw := flag.Bool("raw", false, "print the model's unparsed JSON response per fixture (debug)")
 	prepOnly := flag.Bool("prep-only", false, "print the prepped body the model would see and skip scoring (no Ollama needed)")
 	flag.Parse()
@@ -76,9 +77,10 @@ func main() {
 		topics,
 		ai.WithGenerateOptions(scoreOpts),
 		ai.WithChunkChars(*chunkChars),
+		ai.WithPromptStyle(*promptStyle),
 	)
 
-	fmt.Printf("model=%s  url=%s  prompt=%s\n", *model, *url, ai.PromptVersion)
+	fmt.Printf("model=%s  url=%s  prompt=%s\n", *model, *url, scorer.PromptVersion())
 	fmt.Printf("topics=[%s]\n\n", strings.Join(topics, ", "))
 
 	ctx := context.Background()

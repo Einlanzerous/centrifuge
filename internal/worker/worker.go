@@ -33,6 +33,10 @@ const (
 type Scorer interface {
 	Score(ctx context.Context, in ai.ScoreInput) (ai.ScoreResult, error)
 	Model() string
+	// PromptVersion is the version stamp for stories this scorer produces —
+	// prompt variants differ per model family (CTFG-61), so the stamp comes
+	// from the scorer, not a package constant.
+	PromptVersion() string
 	// Deterministic reports whether scoring samples greedily (temperature 0), so
 	// retrying a truncated response would reproduce the identical output. When
 	// true the worker salvages immediately instead of burning retries (CTFG-45).
@@ -333,7 +337,7 @@ func (w *Worker) persist(ctx context.Context, nl db.Newsletter, res ai.ScoreResu
 				PrimaryTopic:   it.PrimaryTopic,
 				Labels:         it.Labels,
 				Model:          model,
-				PromptVersion:  ai.PromptVersion,
+				PromptVersion:  w.scorer.PromptVersion(),
 			}); err != nil {
 				return err
 			}

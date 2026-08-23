@@ -98,6 +98,7 @@ func runServer(cfg *config.Config, logger *slog.Logger) error {
 			cfg.RelevanceTopics,
 			ai.WithGenerateOptions(scoreOpts),
 			ai.WithChunkChars(cfg.ScoringChunkChars),
+			ai.WithPromptStyle(cfg.ScoringPromptStyle),
 		)
 		w := worker.New(pool, scorer,
 			worker.WithInterval(cfg.ScoringInterval),

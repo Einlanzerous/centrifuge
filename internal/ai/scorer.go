@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // ScoreInput is the per-newsletter material the scorer turns into a prompt. The
@@ -37,6 +38,10 @@ type Scorer struct {
 	topics     []string
 	options    map[string]any
 	chunkChars int
+	// promptStyle selects the scoring prompt: "standard" (BuildPrompt),
+	// "compact" (BuildPromptCompact), or "" / "auto" — pick by model family
+	// (glimmer's segmentation collapses under instruction bulk, CTFG-61).
+	promptStyle string
 }
 
 // ScorerOption configures a Scorer.
@@ -52,6 +57,49 @@ func WithGenerateOptions(opts map[string]any) ScorerOption {
 // at or under it are always scored whole. n <= 0 disables chunking entirely.
 func WithChunkChars(n int) ScorerOption {
 	return func(s *Scorer) { s.chunkChars = n }
+}
+
+// WithPromptStyle forces the scoring prompt variant: "standard" or "compact".
+// Anything else (including "auto") keeps the per-model default.
+func WithPromptStyle(style string) ScorerOption {
+	return func(s *Scorer) { s.promptStyle = style }
+}
+
+// compact reports whether this scorer uses the compact prompt variant — forced
+// by WithPromptStyle, else chosen by model family: glimmer collapses a digest
+// to one item under the full prompt's instruction bulk (CTFG-61), so it gets
+// the compact one.
+func (s *Scorer) compact() bool {
+	switch s.promptStyle {
+	case "compact":
+		return true
+	case "standard":
+		return false
+	}
+	return strings.Contains(s.client.Model(), "glimmer")
+}
+
+// PromptVersion is the version stamp for stories this scorer produces.
+func (s *Scorer) PromptVersion() string {
+	if s.compact() {
+		return PromptVersionCompact
+	}
+	return PromptVersion
+}
+
+// buildScoringPrompt renders the scoring prompt for in using the selected
+// variant.
+func (s *Scorer) buildScoringPrompt(in ScoreInput) string {
+	pi := PromptInput{
+		SourceName: in.SourceName,
+		Subject:    in.Subject,
+		Body:       in.Body,
+		Topics:     s.topics,
+	}
+	if s.compact() {
+		return BuildPromptCompact(pi)
+	}
+	return BuildPrompt(pi)
 }
 
 // NewScorer builds a Scorer over client, biased toward the given focus topics
@@ -133,13 +181,7 @@ func (s *Scorer) Score(ctx context.Context, in ScoreInput) (ScoreResult, error) 
 // scoreOnce runs one prompt-build → generate → validate pass over a single
 // body (a whole newsletter or one chunk).
 func (s *Scorer) scoreOnce(ctx context.Context, in ScoreInput) ([]ScoredItem, error) {
-	prompt := BuildPrompt(PromptInput{
-		SourceName: in.SourceName,
-		Subject:    in.Subject,
-		Body:       in.Body,
-		Topics:     s.topics,
-	})
-	raw, err := s.client.GenerateFormat(ctx, prompt, ItemsSchema(), s.options)
+	raw, err := s.client.GenerateFormat(ctx, s.buildScoringPrompt(in), ItemsSchema(), s.options)
 	if err != nil {
 		var pe *PartialError
 		if !errors.As(err, &pe) {
@@ -201,13 +243,7 @@ func (s *Scorer) Model() string { return s.client.Model() }
 // emits. A done:false partial envelope (CTFG-63) returns the partial text
 // alongside the *PartialError so the harness can still show what arrived.
 func (s *Scorer) Raw(ctx context.Context, in ScoreInput) (string, error) {
-	prompt := BuildPrompt(PromptInput{
-		SourceName: in.SourceName,
-		Subject:    in.Subject,
-		Body:       in.Body,
-		Topics:     s.topics,
-	})
-	raw, err := s.client.GenerateFormat(ctx, prompt, ItemsSchema(), s.options)
+	raw, err := s.client.GenerateFormat(ctx, s.buildScoringPrompt(in), ItemsSchema(), s.options)
 	if err != nil {
 		var pe *PartialError
 		if errors.As(err, &pe) {

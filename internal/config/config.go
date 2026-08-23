@@ -145,6 +145,11 @@ type Config struct {
 	// in chunks; <= 0 disables chunking.
 	ScoringChunkChars int
 
+	// ScoringPromptStyle forces the scoring prompt variant: "standard",
+	// "compact", or "auto" (default — per model family; glimmer's segmentation
+	// collapses under instruction bulk, CTFG-61).
+	ScoringPromptStyle string
+
 	// CORSAllowOrigin is the Access-Control-Allow-Origin served by the read API
 	// for the browser frontend. Defaults to "*" (the API carries no
 	// credentials). Set to a specific origin to lock it down.
@@ -180,6 +185,7 @@ func Load() (*Config, error) {
 		ScoringBatch:       DefaultScoringBatch,
 		ScoringMaxAttempts: DefaultScoringMaxAttempts,
 		ScoringChunkChars:  DefaultScoringChunkChars,
+		ScoringPromptStyle: getEnvDefault("SCORING_PROMPT_STYLE", "auto"),
 		CORSAllowOrigin:    getEnvDefault("CORS_ALLOW_ORIGIN", "*"),
 		PublicBaseURL:      strings.TrimRight(os.Getenv("PUBLIC_BASE_URL"), "/"),
 	}

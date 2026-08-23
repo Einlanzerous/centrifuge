@@ -28,6 +28,8 @@ func (s *stubScorer) Score(_ context.Context, _ ai.ScoreInput) (ai.ScoreResult, 
 
 func (s *stubScorer) Model() string { return "stub-model" }
 
+func (s *stubScorer) PromptVersion() string { return ai.PromptVersion }
+
 func (s *stubScorer) Deterministic() bool { return s.deterministic }
 
 func quietWorker(pool *pgxpool.Pool, scorer Scorer) *Worker {

@@ -102,9 +102,18 @@ type rawItem struct {
 // Recovered is how many complete leading items were salvaged from the partial
 // output; ParseItems returns those items alongside this error so the worker can
 // keep them once retries are exhausted instead of losing the whole digest.
-type TruncatedError struct{ Recovered int }
+type TruncatedError struct {
+	Recovered int
+	// Reason attributes the truncation when it was detected somewhere other than
+	// an unterminated JSON array — e.g. an Ollama done:false partial envelope
+	// (CTFG-63). Empty for the classic cut-off-array case.
+	Reason string
+}
 
 func (e *TruncatedError) Error() string {
+	if e.Reason != "" {
+		return fmt.Sprintf("ai: model output truncated (%s; recovered %d complete item(s))", e.Reason, e.Recovered)
+	}
 	return fmt.Sprintf("ai: model output truncated (recovered %d complete item(s))", e.Recovered)
 }
 

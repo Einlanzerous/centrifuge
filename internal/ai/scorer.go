@@ -1,6 +1,9 @@
 package ai
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 // ScoreInput is the per-newsletter material the scorer turns into a prompt. The
 // worker derives Body from the cleaned, truncated newsletter text (Phase 2).
@@ -51,14 +54,30 @@ func (s *Scorer) Score(ctx context.Context, in ScoreInput) ([]ScoredItem, error)
 	})
 	raw, err := s.client.GenerateFormat(ctx, prompt, ItemsSchema(), s.options)
 	if err != nil {
-		return nil, err
+		var pe *PartialError
+		if !errors.As(err, &pe) {
+			return nil, err
+		}
+		// Ollama cut the generation server-side (done:false; CTFG-63). Whatever
+		// text it did produce is a truncated response in all but shape, so salvage
+		// the complete leading items and surface the cut through the truncation
+		// path the worker already handles — attributed via Reason.
+		items, perr := ParseItems(pe.Response)
+		var tr *TruncatedError
+		if errors.As(perr, &tr) {
+			tr.Reason = pe.Error()
+			return items, tr
+		}
+		return items, &TruncatedError{Recovered: len(items), Reason: pe.Error()}
 	}
 	return ParseItems(raw)
 }
 
 // Raw returns the model's unparsed response for in — the prompt is built the
 // same way as Score, but no validation is applied. It exists for the eval
-// harness to inspect what the model actually emits.
+// harness to inspect what the model actually emits. A done:false partial
+// envelope (CTFG-63) returns the partial text alongside the *PartialError so
+// the harness can still show what arrived.
 func (s *Scorer) Raw(ctx context.Context, in ScoreInput) (string, error) {
 	prompt := BuildPrompt(PromptInput{
 		SourceName: in.SourceName,
@@ -66,7 +85,14 @@ func (s *Scorer) Raw(ctx context.Context, in ScoreInput) (string, error) {
 		Body:       in.Body,
 		Topics:     s.topics,
 	})
-	return s.client.GenerateFormat(ctx, prompt, ItemsSchema(), s.options)
+	raw, err := s.client.GenerateFormat(ctx, prompt, ItemsSchema(), s.options)
+	if err != nil {
+		var pe *PartialError
+		if errors.As(err, &pe) {
+			return pe.Response, err
+		}
+	}
+	return raw, err
 }
 
 // Model returns the model tag the scorer's client uses, for provenance.

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.1](https://github.com/Einlanzerous/centrifuge/compare/v1.6.0...v1.6.1) (2026-09-11)
+
+
+### Bug Fixes
+
+* **deploy:** pin the runtime to alpine 3.23 and move the web image off EOL nginx 1.27 (SERV-170) ([#51](https://github.com/Einlanzerous/centrifuge/issues/51)) ([0fb38e3](https://github.com/Einlanzerous/centrifuge/commit/0fb38e36c7be6d3bbe699d658fc250545b24dc93))
+
 ## [1.6.0](https://github.com/Einlanzerous/centrifuge/compare/v1.5.8...v1.6.0) (2026-08-23)
 
 

@@ -40,7 +40,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
     -o /centrifuge ./cmd/centrifuge
 
 # ─── runtime ───────────────────────────────────────────────────────────────
-FROM alpine:3
+FROM alpine:3.23
 WORKDIR /app
 
 RUN apk add --no-cache wget tini && \

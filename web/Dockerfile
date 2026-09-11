@@ -11,7 +11,7 @@ COPY . .
 RUN npm run build
 
 # ─── serve ───────────────────────────────────────────────────────────────────
-FROM nginx:1.27-alpine
+FROM nginx:1.30-alpine
 
 # The template is rendered at container start with ${CENTRIFUGE_UPSTREAM}.
 COPY nginx.conf /etc/nginx/templates/default.conf.template

@@ -101,7 +101,8 @@ const summaryLine = computed(() => {
     </header>
 
     <!-- Loading skeleton -->
-    <div v-if="loading && !today" class="masonry" role="status" aria-label="Loading">
+    <div class="sr-only" role="status" aria-live="polite">{{ loading && !today ? 'Loading…' : '' }}</div>
+    <div v-if="loading && !today" class="masonry" aria-hidden="true">
       <div
         v-for="n in 6"
         :key="n"

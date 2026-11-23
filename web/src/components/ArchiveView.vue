@@ -185,9 +185,10 @@ function onSearch(e: Event) {
         />
       </div>
 
+      <div class="sr-only" role="status" aria-live="polite">{{ loading ? 'Loading…' : '' }}</div>
       <div
         v-if="loading"
-        role="status"
+        aria-hidden="true"
         class="rounded-2xl ring-1 rule p-8 text-center text-ink-500 dark:text-ink-300"
       >
         Loading…

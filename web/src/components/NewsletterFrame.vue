@@ -84,6 +84,20 @@ function fit() {
   }
 }
 
+// Observer path. A body that fills the frame (html,body{height:100%}) reports the
+// frame's own height, so growing on that would feed back forever: only grow when
+// content is shorter than the frame, and only shrink on a clear difference.
+function refit() {
+  const f = frame.value
+  const body = frameDoc()?.body
+  if (!f || !body) return
+  const content = body.offsetHeight
+  const applied = f.offsetHeight
+  if (content >= applied) return
+  const next = Math.min(content + 24, 20000)
+  if (Math.abs(next - applied) > 1) f.style.height = next + 'px'
+}
+
 // Late-loading images and fonts change the document height after `load`, so
 // keep the frame fitted for as long as the document lives.
 let resizeObserver: ResizeObserver | undefined
@@ -91,7 +105,7 @@ function observeFit() {
   resizeObserver?.disconnect()
   const d = frameDoc()
   if (!d?.body || typeof ResizeObserver === 'undefined') return
-  resizeObserver = new ResizeObserver(fit)
+  resizeObserver = new ResizeObserver(refit)
   resizeObserver.observe(d.body)
 }
 

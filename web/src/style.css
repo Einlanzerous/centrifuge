@@ -16,6 +16,10 @@ html.dark {
   --border: #2a2722;
   color-scheme: dark;
 }
+html {
+  /* Keep the layout still when the modal's scroll lock removes the scrollbar. */
+  scrollbar-gutter: stable;
+}
 html,
 body {
   background: var(--bg);

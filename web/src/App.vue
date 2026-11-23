@@ -50,7 +50,7 @@ const archiveCount = computed(() => store.archive.value?.total ?? 0)
 </script>
 
 <template>
-  <div class="min-h-screen text-ink-800 dark:text-ink-100">
+  <div class="min-h-dvh text-ink-800 dark:text-ink-100">
     <TopBar
       :view="view"
       :archive-count="archiveCount"

@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import type { Item, Rating } from '../api/types'
 import { artFallback, artGradient, dotColor } from '../lib/art'
 import { formatDate, timeAgo } from '../lib/format'
+import { useToast } from '../composables/useToast'
 import Icon from './Icon.vue'
 import NewsletterFrame from './NewsletterFrame.vue'
 
@@ -40,20 +41,62 @@ const artBg = computed(() => artGradient(props.item?.topic_color))
 const fallback = computed(() => artFallback(props.item?.topic_color))
 const dot = computed(() => dotColor(props.item?.topic_color))
 
+// Native modal <dialog>: showModal() gives the focus trap, Esc, focus return and
+// inert background. The parent's `item` is the source of truth for open/closed;
+// the dialog's own `close` event (Esc, form dismissal) syncs back to it.
+const dialog = ref<HTMLDialogElement | null>(null)
+// showModal() makes the rest of the page inert, so toasts are mirrored into a
+// live region inside the dialog while it is open.
+const { toast } = useToast()
+
+function sync() {
+  const d = dialog.value
+  if (!d) return
+  if (props.item && !d.open) d.showModal()
+  else if (!props.item && d.open) d.close()
+}
+onMounted(sync)
+watch(() => !!props.item, () => nextTick(sync))
+
+function onDialogClose() {
+  // Esc closes the dialog without touching our state; tell the parent. A close
+  // we triggered ourselves arrives with item already null, so this is a no-op.
+  if (props.item) emit('close')
+}
+
+// A click whose target is the <dialog> itself landed on the backdrop (the panel
+// fills the rest). closedby="any" would do this natively but Firefox 160 lacks it.
+// Require the press to start on the backdrop too, so dragging a text selection out
+// of the panel and releasing on the padding does not dismiss.
+let pressedBackdrop = false
+function onDialogPointerDown(e: PointerEvent) {
+  pressedBackdrop = e.target === dialog.value
+}
+function onDialogClick(e: MouseEvent) {
+  if (e.target === dialog.value && pressedBackdrop) emit('close')
+  pressedBackdrop = false
+}
+
 function nextRating(target: Rating): Rating {
   return props.item?.rating === target ? 'none' : target
 }
 </script>
 
 <template>
-  <Transition name="fade">
-    <div
-      v-if="item"
-      class="fixed inset-0 z-40 bg-ink-900/40 dark:bg-black/70 backdrop-blur-sm flex items-stretch sm:items-center justify-center sm:p-8"
-      @click.self="emit('close')"
-    >
+  <dialog
+    ref="dialog"
+    aria-labelledby="reader-title"
+    class="reader-dialog m-0 p-0 border-0 bg-transparent text-inherit w-full h-dvh max-w-none max-h-none items-stretch sm:items-center justify-center sm:p-8 open:flex backdrop:bg-ink-900/40 dark:backdrop:bg-black/70 backdrop:backdrop-blur-sm"
+    @pointerdown="onDialogPointerDown"
+    @click="onDialogClick"
+    @close="onDialogClose"
+  >
+      <div class="sr-only" role="status" aria-live="polite">
+        {{ item ? toast : '' }}{{ item && loading ? 'Loading…' : '' }}
+      </div>
       <div
-        class="bg-[var(--paper)] w-full sm:max-w-3xl sm:rounded-3xl shadow-2xl ring-1 ring-black/5 dark:ring-white/10 flex flex-col overflow-hidden max-h-[100vh] sm:max-h-[90vh]"
+        v-if="item"
+        class="bg-[var(--paper)] w-full sm:max-w-3xl sm:rounded-3xl shadow-2xl ring-1 ring-black/5 dark:ring-white/10 flex flex-col overflow-hidden max-h-dvh sm:max-h-[90dvh]"
       >
         <!-- Header art: the story's own image when present, else topic gradient -->
         <div
@@ -138,10 +181,10 @@ function nextRating(target: Rating): Rating {
         <div
           class="reader flex-1 overflow-y-auto px-5 py-6 sm:px-10 sm:py-8 text-ink-700 dark:text-ink-100"
         >
-          <h1 class="font-serif text-[2.25rem] leading-[1.05] mb-2 text-ink-800 dark:text-ink-50">
+          <h1 id="reader-title" class="font-serif text-[2.25rem] leading-[1.05] mb-2 text-ink-800 dark:text-ink-50">
             {{ item.title }}
           </h1>
-          <div v-if="loading" class="text-ink-400 font-mono text-xs uppercase tracking-widest mt-4">
+          <div v-if="loading" aria-hidden="true" class="text-ink-400 font-mono text-xs uppercase tracking-widest mt-4">
             Loading…
           </div>
 
@@ -238,6 +281,5 @@ function nextRating(target: Rating): Rating {
           </div>
         </div>
       </div>
-    </div>
-  </Transition>
+  </dialog>
 </template>

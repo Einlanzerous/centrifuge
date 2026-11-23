@@ -84,7 +84,7 @@ const summaryLine = computed(() => {
         <button
           v-for="t in topics"
           :key="t.topic"
-          class="tag transition hover:scale-[1.02]"
+          class="tag transition motion-safe:hover:scale-[1.02]"
           :class="[
             activeTopic === t.topic ? 'ring-2 ring-ink-800 dark:ring-ink-100' : '',
             activeTopic && activeTopic !== t.topic ? 'opacity-50' : '',
@@ -101,11 +101,12 @@ const summaryLine = computed(() => {
     </header>
 
     <!-- Loading skeleton -->
-    <div v-if="loading && !today" class="masonry">
+    <div class="sr-only" role="status" aria-live="polite">{{ loading && !today ? 'Loading…' : '' }}</div>
+    <div v-if="loading && !today" class="masonry" aria-hidden="true">
       <div
         v-for="n in 6"
         :key="n"
-        class="rounded-2xl bg-[var(--paper)] ring-1 ring-black/5 dark:ring-white/10 h-64 animate-pulse"
+        class="rounded-2xl bg-[var(--paper)] ring-1 ring-black/5 dark:ring-white/10 h-64 motion-safe:animate-pulse"
       ></div>
     </div>
 

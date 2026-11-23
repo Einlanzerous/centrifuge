@@ -175,7 +175,9 @@ function onSearch(e: Event) {
           class="absolute left-3 top-1/2 -translate-y-1/2 text-ink-400"
         />
         <input
-          type="text"
+          type="search"
+          enterkeyhint="search"
+          aria-label="Search titles, summaries, sources"
           :value="q"
           placeholder="Search titles, summaries, sources…"
           class="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[var(--paper)] ring-1 rule text-sm focus:ring-2 focus:ring-ink-300 focus:outline-none placeholder:text-ink-400"
@@ -183,8 +185,10 @@ function onSearch(e: Event) {
         />
       </div>
 
+      <div class="sr-only" role="status" aria-live="polite">{{ loading ? 'Loading…' : '' }}</div>
       <div
         v-if="loading"
+        aria-hidden="true"
         class="rounded-2xl ring-1 rule p-8 text-center text-ink-500 dark:text-ink-300"
       >
         Loading…
@@ -210,8 +214,7 @@ function onSearch(e: Event) {
             <li
               v-for="it in g.items"
               :key="it.id"
-              class="px-4 py-3.5 sm:px-5 sm:py-4 flex items-stretch gap-3 cursor-pointer hover:bg-ink-50 dark:hover:bg-ink-700/40 transition-colors"
-              @click="emit('open', it)"
+              class="relative px-4 py-3.5 sm:px-5 sm:py-4 flex items-stretch gap-3 hover:bg-ink-50 dark:hover:bg-ink-700/40 focus-within:bg-ink-50 dark:focus-within:bg-ink-700/40 transition-colors"
             >
               <div
                 class="w-1 flex-none self-stretch rounded-full"
@@ -231,11 +234,15 @@ function onSearch(e: Event) {
                   <span class="text-ink-300">·</span>
                   <span class="truncate">{{ it.primary_topic }}</span>
                 </div>
-                <div
-                  class="font-serif text-[1.15rem] leading-tight text-ink-800 dark:text-ink-50 truncate"
+                <!-- The title is the row's real button; its ::after stretches the hit
+                     area over the whole row so the row stays click-to-open. -->
+                <button
+                  type="button"
+                  class="block w-full text-left cursor-pointer font-serif text-[1.15rem] leading-tight text-ink-800 dark:text-ink-50 truncate after:absolute after:inset-0 after:content-[''] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ink-400 focus-visible:after:rounded-none"
+                  @click="emit('open', it)"
                 >
                   {{ it.title }}
-                </div>
+                </button>
                 <div class="text-sm text-ink-500 dark:text-ink-300 line-clamp-1 mt-0.5">
                   {{ it.summary }}
                 </div>
@@ -243,7 +250,7 @@ function onSearch(e: Event) {
               <div class="flex items-center gap-1 flex-none self-center">
                 <button
                   v-if="it.bookmarked"
-                  class="p-1.5 rounded-full text-ai-700 bg-ai-500/15"
+                  class="relative z-10 p-1.5 rounded-full text-ai-700 bg-ai-500/15"
                   aria-label="Bookmarked"
                   @click.stop="emit('bookmark', it)"
                 >

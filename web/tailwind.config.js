@@ -8,9 +8,9 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['"Geist"', 'system-ui', 'sans-serif'],
+        sans: ['"Geist Variable"', 'system-ui', 'sans-serif'],
         serif: ['"Instrument Serif"', 'Georgia', 'serif'],
-        mono: ['"Geist Mono"', 'ui-monospace', 'monospace'],
+        mono: ['"Geist Mono Variable"', 'ui-monospace', 'monospace'],
       },
       colors: {
         // Warm, low-saturation neutral canvas (design system).

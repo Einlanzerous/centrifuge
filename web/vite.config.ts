@@ -8,6 +8,11 @@ const apiTarget = process.env.CENTRIFUGE_API_PROXY || 'http://localhost:4003'
 
 export default defineConfig({
   plugins: [vue()],
+  build: {
+    // Firefox is the primary browser: Baseline Widely available plus the Firefox
+    // floor (160 here). Anything newer is progressive enhancement.
+    target: ['es2022', 'firefox160', 'chrome120', 'safari17'],
+  },
   server: {
     // Bind all interfaces so the dev server is reachable from other machines on
     // the LAN / tailnet (this runs on the homelab box, not a dev laptop).

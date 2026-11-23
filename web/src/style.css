@@ -8,18 +8,20 @@
   --bg: #f7f5f1;
   --paper: #ffffff;
   --border: #ece8df;
+  color-scheme: light;
 }
 html.dark {
   --bg: #0f0d0a;
   --paper: #1a1814;
   --border: #2a2722;
+  color-scheme: dark;
 }
 html,
 body {
   background: var(--bg);
 }
 body {
-  font-family: 'Geist', system-ui, sans-serif;
+  font-family: 'Geist Variable', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -112,6 +114,42 @@ body {
   transform: scale(0.7);
 }
 
+/* Modal dialog: lock page scroll behind it, and fade in. */
+html:has(dialog[open]) {
+  overflow: hidden;
+}
+.reader-dialog[open] {
+  animation: dialog-in 0.25s ease;
+}
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+/* Motion: drop the slide/scale, keep a plain cross-fade. */
+@media (prefers-reduced-motion: reduce) {
+  .reader-dialog[open] {
+    animation: none;
+  }
+  .fade-enter-active,
+  .fade-leave-active {
+    transition: opacity 0.15s ease;
+  }
+  .fade-enter-from,
+  .fade-leave-to {
+    transform: none;
+  }
+  .pop-enter-active {
+    transition: opacity 0.15s ease;
+  }
+  .pop-enter-from {
+    transform: none;
+    opacity: 0;
+  }
+}
+
 /* Pill tag (Geist Mono) */
 .tag {
   display: inline-flex;
@@ -119,7 +157,7 @@ body {
   gap: 0.375rem;
   padding: 2px 8px;
   border-radius: 999px;
-  font: 500 11px/1.4 'Geist Mono', monospace;
+  font: 500 11px/1.4 'Geist Mono Variable', monospace;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
@@ -129,13 +167,13 @@ body {
   border-radius: 999px;
 }
 
-/* Reader modal scrollbar */
-.reader::-webkit-scrollbar {
-  width: 8px;
+/* Reader modal scrollbar (standard properties: Firefox 64+, Chrome 121+) */
+.reader {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
 }
-.reader::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.12);
-  border-radius: 999px;
+html.dark .reader {
+  scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
 }
 
 /* Reading-pane prose for raw newsletter HTML */

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { onBeforeUnmount, ref, watch } from 'vue'
 import { useTheme } from '../composables/useTheme'
 
 // Renders raw newsletter HTML inside a sandboxed iframe. This isolates the
@@ -84,11 +84,25 @@ function fit() {
   }
 }
 
+// Late-loading images and fonts change the document height after `load`, so
+// keep the frame fitted for as long as the document lives.
+let resizeObserver: ResizeObserver | undefined
+function observeFit() {
+  resizeObserver?.disconnect()
+  const d = frameDoc()
+  if (!d?.body || typeof ResizeObserver === 'undefined') return
+  resizeObserver = new ResizeObserver(fit)
+  resizeObserver.observe(d.body)
+}
+
+onBeforeUnmount(() => resizeObserver?.disconnect())
+
 function onLoad() {
   emailDark = measureEmailDark()
   measured = true
   applyOverride()
   fit()
+  observeFit()
   ready.value = true
 }
 
